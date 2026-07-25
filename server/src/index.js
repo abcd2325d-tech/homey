@@ -34,7 +34,7 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "6mb" }));
 app.use(morgan(config.nodeEnv === "development" ? "dev" : "combined"));
 
 const apiLimiter = rateLimit({

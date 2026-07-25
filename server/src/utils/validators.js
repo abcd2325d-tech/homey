@@ -23,7 +23,18 @@ export const listingSchema = z.object({
   beds: z.number().int().min(0).max(50),
   baths: z.number().int().min(0).max(50),
   amenities: z.array(z.string()).optional().default([]),
-  imageUrl: z.string().trim().url().optional().or(z.literal("")).default(""),
+  // Either a normal image URL, or a data: URI produced by resizing a photo
+  // client-side before upload (see client/src/components/ListingForm.jsx).
+  imageUrl: z
+    .string()
+    .trim()
+    .max(2_000_000, "Photo is too large")
+    .refine(
+      (val) => val === "" || /^https?:\/\//.test(val) || /^data:image\/(png|jpe?g|webp|gif);base64,/.test(val),
+      { message: "Must be a valid image URL or an uploaded photo" }
+    )
+    .optional()
+    .default(""),
 });
 
 export const bookingSchema = z.object({

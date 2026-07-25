@@ -14,6 +14,37 @@ const emptyForm = {
   imageUrl: "",
 };
 
+// Shrinks a photo down before it's stored, so a full-resolution phone photo
+// (often 3-5MB) doesn't get sent to the server as-is. Caps the longest side
+// at 1280px and re-encodes as JPEG, which keeps most photos well under 500KB.
+function resizeImageFile(file, maxDimension = 1280, quality = 0.75) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Couldn't read that file"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("That doesn't look like a valid image"));
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > height && width > maxDimension) {
+          height = Math.round((height * maxDimension) / width);
+          width = maxDimension;
+        } else if (height > maxDimension) {
+          width = Math.round((width * maxDimension) / height);
+          height = maxDimension;
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function ListingForm({ initial, onSubmit, submitLabel = "Save" }) {
   const [form, setForm] = useState(() =>
     initial
@@ -22,9 +53,25 @@ export default function ListingForm({ initial, onSubmit, submitLabel = "Save" })
   );
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
+  }
+
+  async function handlePhotoChange(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError("");
+    setPhotoBusy(true);
+    try {
+      const dataUrl = await resizeImageFile(file);
+      update("imageUrl", dataUrl);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPhotoBusy(false);
+    }
   }
 
   async function handleSubmit(e) {
@@ -105,10 +152,14 @@ export default function ListingForm({ initial, onSubmit, submitLabel = "Save" })
         <input placeholder="Wifi, Kitchen, Pool" value={form.amenities} onChange={(e) => update("amenities", e.target.value)} />
       </label>
       <label>
-        Image URL
-        <input placeholder="https://…" value={form.imageUrl} onChange={(e) => update("imageUrl", e.target.value)} />
+        Photo
+        <input type="file" accept="image/*" onChange={handlePhotoChange} />
       </label>
-      <button className="btn-primary" type="submit" disabled={submitting}>
+      {photoBusy && <p className="muted small">Processing photo…</p>}
+      {form.imageUrl && !photoBusy && (
+        <img src={form.imageUrl} alt="Listing preview" className="photo-preview" />
+      )}
+      <button className="btn-primary" type="submit" disabled={submitting || photoBusy}>
         {submitting ? "Saving…" : submitLabel}
       </button>
     </form>
