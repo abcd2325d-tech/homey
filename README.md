@@ -1,7 +1,8 @@
 # homey — an Airbnb-style booking app
 
-A full-stack listings & booking app: browse/search stays, view listing details, book with a
-simulated payment, and manage listings as a host.
+A full-stack listings & booking app: browse/search stays, save favorites, view a rich listing
+page with reviews and host info, book with a simulated payment, message hosts/guests about a
+stay, and manage listings as a host. Includes a bottom tab bar for phone-sized screens.
 
 - **Backend:** Node.js + Express, SQLite (via Node's built-in `node:sqlite`), JWT auth, bcrypt
   password hashing, input validation (zod), rate limiting, Helmet security headers.

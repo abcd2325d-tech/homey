@@ -2,7 +2,7 @@ import { Router } from "express";
 import crypto from "crypto";
 import db from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
-import { bookingSchema, validate } from "../utils/validators.js";
+import { bookingSchema, reviewSchema, validate } from "../utils/validators.js";
 
 const router = Router();
 
@@ -84,9 +84,25 @@ router.post("/", requireAuth, validate(bookingSchema), (req, res) => {
 router.get("/mine", requireAuth, (req, res) => {
   const rows = db
     .prepare(
-      `SELECT b.*, l.title AS listing_title, l.city AS listing_city, l.image_url AS listing_image
+      `SELECT b.*, l.title AS listing_title, l.city AS listing_city, l.image_url AS listing_image,
+              (SELECT COUNT(*) FROM reviews r WHERE r.booking_id = b.id) AS has_review
        FROM bookings b JOIN listings l ON l.id = b.listing_id
        WHERE b.guest_id = ? ORDER BY b.created_at DESC`
+    )
+    .all(req.user.id);
+  res.json({ bookings: rows.map((b) => ({ ...b, has_review: !!b.has_review })) });
+});
+
+// Bookings made by guests on listings this host owns — lets a host see who
+// booked their places so they know who they can message.
+router.get("/host", requireAuth, (req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT b.*, l.title AS listing_title, u.name AS guest_name
+       FROM bookings b
+       JOIN listings l ON l.id = b.listing_id
+       JOIN users u ON u.id = b.guest_id
+       WHERE l.host_id = ? ORDER BY b.created_at DESC`
     )
     .all(req.user.id);
   res.json({ bookings: rows });
@@ -99,6 +115,22 @@ router.post("/:id/cancel", requireAuth, (req, res) => {
 
   db.prepare("UPDATE bookings SET status = 'cancelled' WHERE id = ?").run(booking.id);
   res.json({ ok: true });
+});
+
+router.post("/:id/review", requireAuth, validate(reviewSchema), (req, res) => {
+  const booking = db.prepare("SELECT * FROM bookings WHERE id = ?").get(req.params.id);
+  if (!booking) return res.status(404).json({ error: "Booking not found" });
+  if (booking.guest_id !== req.user.id) return res.status(403).json({ error: "Not your booking" });
+
+  const existing = db.prepare("SELECT id FROM reviews WHERE booking_id = ?").get(booking.id);
+  if (existing) return res.status(409).json({ error: "You already reviewed this stay" });
+
+  const { rating, comment } = req.validated;
+  db.prepare(
+    "INSERT INTO reviews (booking_id, listing_id, guest_id, rating, comment) VALUES (?, ?, ?, ?, ?)"
+  ).run(booking.id, booking.listing_id, req.user.id, rating, comment);
+
+  res.status(201).json({ ok: true });
 });
 
 export default router;

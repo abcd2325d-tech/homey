@@ -12,7 +12,7 @@ export default function Navbar() {
         {user ? (
           <>
             {user.isHost && <Link to="/host">Host dashboard</Link>}
-            <Link to="/trips">My trips</Link>
+            <Link to="/trips" className="hide-on-mobile-nav">My trips</Link>
             <span className="nav-user">Hi, {user.name.split(" ")[0]}</span>
             <button
               className="btn-link"

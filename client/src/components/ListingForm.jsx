@@ -12,6 +12,8 @@ const emptyForm = {
   baths: 1,
   amenities: "",
   imageUrl: "",
+  houseRules: "",
+  cancellationPolicy: "",
 };
 
 // Shrinks a photo down before it's stored, so a full-resolution phone photo
@@ -94,6 +96,8 @@ export default function ListingForm({ initial, onSubmit, submitLabel = "Save" })
           .map((a) => a.trim())
           .filter(Boolean),
         imageUrl: form.imageUrl,
+        houseRules: form.houseRules,
+        cancellationPolicy: form.cancellationPolicy,
       });
     } catch (err) {
       setError(err.message);
@@ -150,6 +154,14 @@ export default function ListingForm({ initial, onSubmit, submitLabel = "Save" })
       <label>
         Amenities (comma separated)
         <input placeholder="Wifi, Kitchen, Pool" value={form.amenities} onChange={(e) => update("amenities", e.target.value)} />
+      </label>
+      <label>
+        House rules
+        <textarea rows={3} placeholder="Check-in after 3pm, no smoking, no parties…" value={form.houseRules} onChange={(e) => update("houseRules", e.target.value)} />
+      </label>
+      <label>
+        Cancellation policy
+        <textarea rows={3} placeholder="Free cancellation up to 48 hours before check-in…" value={form.cancellationPolicy} onChange={(e) => update("cancellationPolicy", e.target.value)} />
       </label>
       <label>
         Photo

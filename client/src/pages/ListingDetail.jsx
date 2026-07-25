@@ -16,6 +16,10 @@ export default function ListingDetail() {
 
   const [listing, setListing] = useState(null);
   const [unavailable, setUnavailable] = useState([]);
+  const [reviews, setReviews] = useState([]);
+  const [host, setHost] = useState(null);
+  const [wishlisted, setWishlisted] = useState(false);
+  const [wishlistBusy, setWishlistBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -36,6 +40,9 @@ export default function ListingDetail() {
       .then((data) => {
         setListing(data.listing);
         setUnavailable(data.unavailable);
+        setReviews(data.reviews || []);
+        setHost(data.host);
+        setWishlisted(!!data.wishlisted);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -43,6 +50,25 @@ export default function ListingDetail() {
 
   const nights = useMemo(() => nightsBetween(checkIn, checkOut), [checkIn, checkOut]);
   const total = listing && nights > 0 ? Math.round(nights * listing.pricePerNight * 100) / 100 : 0;
+
+  async function toggleWishlist() {
+    if (!user) {
+      navigate("/login", { state: { from: `/listings/${id}` } });
+      return;
+    }
+    if (wishlistBusy) return;
+    setWishlistBusy(true);
+    const next = !wishlisted;
+    setWishlisted(next);
+    try {
+      if (next) await api.addWishlist(listing.id);
+      else await api.removeWishlist(listing.id);
+    } catch {
+      setWishlisted(!next);
+    } finally {
+      setWishlistBusy(false);
+    }
+  }
 
   function handleReserveClick() {
     setBookingError("");
@@ -86,16 +112,36 @@ export default function ListingDetail() {
   if (error) return <div className="page"><p className="error-text">{error}</p></div>;
   if (!listing) return null;
 
+  const mapQuery = encodeURIComponent(`${listing.city}, ${listing.country}`);
+
   return (
     <div className="page listing-detail">
       <div
         className="detail-hero"
         style={{ backgroundImage: `url(${listing.imageUrl || "https://placehold.co/1200x500?text=Homey"})` }}
-      />
+      >
+        {user && (
+          <button
+            className={`wishlist-heart detail${wishlisted ? " saved" : ""}`}
+            onClick={toggleWishlist}
+            aria-label={wishlisted ? "Remove from wishlist" : "Save to wishlist"}
+            type="button"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" fill={wishlisted ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2">
+              <path d="M12 21s-7.5-4.9-10-9.3C.4 8.4 2 5 5.4 5c2 0 3.4 1.1 4.1 2.3.2.4.8.4 1 0C11.2 6.1 12.6 5 14.6 5 18 5 19.6 8.4 22 11.7 19.5 16.1 12 21 12 21z" />
+            </svg>
+          </button>
+        )}
+      </div>
       <div className="detail-body">
         <div className="detail-main">
           <h1>{listing.title}</h1>
-          <p className="listing-location">{listing.city}, {listing.country}</p>
+          <p className="listing-location">
+            {listing.city}, {listing.country}
+            {listing.avgRating != null && (
+              <span className="listing-rating"> · ★ {listing.avgRating} ({listing.reviewCount} review{listing.reviewCount === 1 ? "" : "s"})</span>
+            )}
+          </p>
           <p className="listing-meta">
             {listing.maxGuests} guests · {listing.bedrooms} bedrooms · {listing.beds} beds · {listing.baths} baths
           </p>
@@ -110,6 +156,65 @@ export default function ListingDetail() {
               </ul>
             </div>
           )}
+
+          {host && (
+            <div className="host-card">
+              <div className="host-avatar">{host.name.slice(0, 1).toUpperCase()}</div>
+              <div>
+                <strong>Hosted by {host.name}</strong>
+                {host.isSuperhost && <span className="superhost-badge">Superhost</span>}
+                <div className="muted small">
+                  {host.listingCount} listing{host.listingCount === 1 ? "" : "s"}
+                  {host.reviewCount > 0 && ` · ${host.reviewCount} review${host.reviewCount === 1 ? "" : "s"}`}
+                  {host.avgRating != null && ` · ★ ${host.avgRating} average`}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {(listing.houseRules || listing.cancellationPolicy) && (
+            <div className="things-to-know">
+              <h3>Things to know</h3>
+              {listing.houseRules && (
+                <div className="know-item">
+                  <strong>House rules</strong>
+                  <p>{listing.houseRules}</p>
+                </div>
+              )}
+              {listing.cancellationPolicy && (
+                <div className="know-item">
+                  <strong>Cancellation policy</strong>
+                  <p>{listing.cancellationPolicy}</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="map-section">
+            <h3>Where you'll be</h3>
+            <iframe
+              title="Listing location"
+              className="map-embed"
+              src={`https://maps.google.com/maps?q=${mapQuery}&z=12&output=embed`}
+              loading="lazy"
+            />
+          </div>
+
+          <div className="reviews-section">
+            <h3>
+              {listing.avgRating != null ? `★ ${listing.avgRating} · ${listing.reviewCount} review${listing.reviewCount === 1 ? "" : "s"}` : "Reviews"}
+            </h3>
+            {reviews.length === 0 && <p className="muted small">No reviews yet.</p>}
+            {reviews.map((r) => (
+              <div key={r.id} className="review-row">
+                <div className="review-top">
+                  <strong>{r.guest_name}</strong>
+                  <span className="muted small">★ {r.rating}</span>
+                </div>
+                {r.comment && <p className="muted small">{r.comment}</p>}
+              </div>
+            ))}
+          </div>
         </div>
 
         <aside className="booking-card">

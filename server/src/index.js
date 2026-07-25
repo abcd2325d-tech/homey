@@ -7,6 +7,8 @@ import { config } from "./config.js";
 import authRoutes from "./routes/auth.js";
 import listingsRoutes from "./routes/listings.js";
 import bookingsRoutes from "./routes/bookings.js";
+import wishlistsRoutes from "./routes/wishlists.js";
+import messagesRoutes from "./routes/messages.js";
 import { notFound, errorHandler } from "./middleware/errorHandler.js";
 import "./db.js";
 
@@ -60,6 +62,8 @@ app.get("/api/health", (_req, res) => res.json({ ok: true, time: new Date().toIS
 app.use("/api/auth", authRoutes);
 app.use("/api/listings", listingsRoutes);
 app.use("/api/bookings", bookingsRoutes);
+app.use("/api/wishlists", wishlistsRoutes);
+app.use("/api/messages", messagesRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

@@ -20,12 +20,48 @@ function serialize(listing) {
     baths: listing.baths,
     amenities: JSON.parse(listing.amenities || "[]"),
     imageUrl: listing.image_url,
+    houseRules: listing.house_rules,
+    cancellationPolicy: listing.cancellation_policy,
     createdAt: listing.created_at,
   };
 }
 
+function listingRatingStats(listingId) {
+  const row = db
+    .prepare("SELECT COUNT(*) AS count, AVG(rating) AS avg FROM reviews WHERE listing_id = ?")
+    .get(listingId);
+  return {
+    reviewCount: row.count || 0,
+    avgRating: row.avg ? Math.round(row.avg * 10) / 10 : null,
+  };
+}
+
+function hostInfo(hostId) {
+  const host = db.prepare("SELECT id, name, created_at FROM users WHERE id = ?").get(hostId);
+  if (!host) return null;
+  const listingCount = db.prepare("SELECT COUNT(*) AS count FROM listings WHERE host_id = ?").get(hostId).count;
+  const reviewStats = db
+    .prepare(
+      `SELECT COUNT(*) AS count, AVG(r.rating) AS avg
+       FROM reviews r JOIN listings l ON l.id = r.listing_id
+       WHERE l.host_id = ?`
+    )
+    .get(hostId);
+  const reviewCount = reviewStats.count || 0;
+  const avgRating = reviewStats.avg ? Math.round(reviewStats.avg * 10) / 10 : null;
+  return {
+    id: host.id,
+    name: host.name,
+    memberSince: host.created_at,
+    listingCount,
+    reviewCount,
+    avgRating,
+    isSuperhost: reviewCount >= 5 && avgRating !== null && avgRating >= 4.5,
+  };
+}
+
 // GET /api/listings?city=&guests=&checkIn=&checkOut=&minPrice=&maxPrice=
-router.get("/", (req, res) => {
+router.get("/", optionalAuth, (req, res) => {
   const { city, guests, checkIn, checkOut, minPrice, maxPrice } = req.query;
   let sql = "SELECT * FROM listings WHERE 1=1";
   const params = [];
@@ -57,7 +93,17 @@ router.get("/", (req, res) => {
   sql += " ORDER BY created_at DESC";
 
   const rows = db.prepare(sql).all(...params);
-  res.json({ listings: rows.map(serialize) });
+  const wishlistedIds = req.user
+    ? new Set(
+        db.prepare("SELECT listing_id FROM wishlists WHERE user_id = ?").all(req.user.id).map((w) => w.listing_id)
+      )
+    : new Set();
+  const listings = rows.map((row) => ({
+    ...serialize(row),
+    ...listingRatingStats(row.id),
+    wishlisted: wishlistedIds.has(row.id),
+  }));
+  res.json({ listings });
 });
 
 router.get("/mine", requireAuth, (req, res) => {
@@ -65,7 +111,7 @@ router.get("/mine", requireAuth, (req, res) => {
   res.json({ listings: rows.map(serialize) });
 });
 
-router.get("/:id", (req, res) => {
+router.get("/:id", optionalAuth, (req, res) => {
   const listing = db.prepare("SELECT * FROM listings WHERE id = ?").get(req.params.id);
   if (!listing) return res.status(404).json({ error: "Listing not found" });
 
@@ -73,7 +119,29 @@ router.get("/:id", (req, res) => {
     .prepare("SELECT check_in, check_out FROM bookings WHERE listing_id = ? AND status != 'cancelled'")
     .all(listing.id);
 
-  res.json({ listing: serialize(listing), unavailable: bookings });
+  const reviews = db
+    .prepare(
+      `SELECT r.id, r.rating, r.comment, r.created_at, u.name AS guest_name
+       FROM reviews r JOIN users u ON u.id = r.guest_id
+       WHERE r.listing_id = ? ORDER BY r.created_at DESC`
+    )
+    .all(listing.id);
+
+  let wishlisted = false;
+  if (req.user) {
+    const w = db
+      .prepare("SELECT id FROM wishlists WHERE user_id = ? AND listing_id = ?")
+      .get(req.user.id, listing.id);
+    wishlisted = !!w;
+  }
+
+  res.json({
+    listing: { ...serialize(listing), ...listingRatingStats(listing.id) },
+    unavailable: bookings,
+    reviews,
+    host: hostInfo(listing.host_id),
+    wishlisted,
+  });
 });
 
 router.post("/", requireAuth, validate(listingSchema), (req, res) => {
@@ -81,8 +149,8 @@ router.post("/", requireAuth, validate(listingSchema), (req, res) => {
   const info = db
     .prepare(
       `INSERT INTO listings
-        (host_id, title, description, city, country, price_per_night, max_guests, bedrooms, beds, baths, amenities, image_url)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (host_id, title, description, city, country, price_per_night, max_guests, bedrooms, beds, baths, amenities, image_url, house_rules, cancellation_policy)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       req.user.id,
@@ -96,7 +164,9 @@ router.post("/", requireAuth, validate(listingSchema), (req, res) => {
       d.beds,
       d.baths,
       JSON.stringify(d.amenities),
-      d.imageUrl
+      d.imageUrl,
+      d.houseRules,
+      d.cancellationPolicy
     );
   const listing = db.prepare("SELECT * FROM listings WHERE id = ?").get(info.lastInsertRowid);
   res.status(201).json({ listing: serialize(listing) });
@@ -109,7 +179,7 @@ router.put("/:id", requireAuth, validate(listingSchema), (req, res) => {
 
   const d = req.validated;
   db.prepare(
-    `UPDATE listings SET title=?, description=?, city=?, country=?, price_per_night=?, max_guests=?, bedrooms=?, beds=?, baths=?, amenities=?, image_url=?
+    `UPDATE listings SET title=?, description=?, city=?, country=?, price_per_night=?, max_guests=?, bedrooms=?, beds=?, baths=?, amenities=?, image_url=?, house_rules=?, cancellation_policy=?
      WHERE id = ?`
   ).run(
     d.title,
@@ -123,6 +193,8 @@ router.put("/:id", requireAuth, validate(listingSchema), (req, res) => {
     d.baths,
     JSON.stringify(d.amenities),
     d.imageUrl,
+    d.houseRules,
+    d.cancellationPolicy,
     listing.id
   );
   const updated = db.prepare("SELECT * FROM listings WHERE id = ?").get(listing.id);

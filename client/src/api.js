@@ -7,12 +7,13 @@ function getToken() {
   return localStorage.getItem("token");
 }
 
-async function request(path, { method = "GET", body, auth = false } = {}) {
+async function request(path, { method = "GET", body } = {}) {
   const headers = { "Content-Type": "application/json" };
-  if (auth) {
-    const token = getToken();
-    if (token) headers.Authorization = `Bearer ${token}`;
-  }
+  // Attach the token whenever one exists — some endpoints (like listing detail)
+  // work for logged-out visitors but return extra info (e.g. wishlisted) when
+  // a token is present, so there's no harm in always sending it.
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers,
@@ -58,7 +59,17 @@ export const api = {
 
   createBooking: (payload) => request("/bookings", { method: "POST", body: payload, auth: true }),
   myBookings: () => request("/bookings/mine", { auth: true }),
+  hostBookings: () => request("/bookings/host", { auth: true }),
   cancelBooking: (id) => request(`/bookings/${id}/cancel`, { method: "POST", auth: true }),
+  leaveReview: (bookingId, payload) => request(`/bookings/${bookingId}/review`, { method: "POST", body: payload, auth: true }),
+
+  myWishlist: () => request("/wishlists/mine", { auth: true }),
+  addWishlist: (listingId) => request(`/wishlists/${listingId}`, { method: "POST", auth: true }),
+  removeWishlist: (listingId) => request(`/wishlists/${listingId}`, { method: "DELETE", auth: true }),
+
+  messageThreads: () => request("/messages/threads", { auth: true }),
+  getThread: (bookingId) => request(`/messages/${bookingId}`, { auth: true }),
+  sendMessage: (bookingId, body) => request(`/messages/${bookingId}`, { method: "POST", body: { body }, auth: true }),
 };
 
 export { getToken };

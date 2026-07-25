@@ -4,14 +4,17 @@ import { api } from "../api.js";
 
 export default function HostDashboard() {
   const [listings, setListings] = useState([]);
+  const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   function load() {
     setLoading(true);
-    api
-      .myListings()
-      .then((data) => setListings(data.listings))
+    Promise.all([api.myListings(), api.hostBookings()])
+      .then(([listingsData, bookingsData]) => {
+        setListings(listingsData.listings);
+        setBookings(bookingsData.bookings);
+      })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }
@@ -55,6 +58,26 @@ export default function HostDashboard() {
           </div>
         ))}
       </div>
+
+      {!loading && bookings.length > 0 && (
+        <>
+          <h2 className="section-heading">Upcoming guests</h2>
+          <div className="host-listing-list">
+            {bookings.map((b) => (
+              <div className="host-listing-row" key={b.id}>
+                <div className="host-listing-info">
+                  <strong>{b.guest_name}</strong>
+                  <span className="muted small">{b.listing_title} · {b.check_in} → {b.check_out}</span>
+                  <span className={`status-badge status-${b.status}`}>{b.status}</span>
+                </div>
+                <div className="host-listing-actions">
+                  <Link to={`/messages/${b.id}`}>Message guest</Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

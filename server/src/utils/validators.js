@@ -35,6 +35,17 @@ export const listingSchema = z.object({
     )
     .optional()
     .default(""),
+  houseRules: z.string().trim().max(2000).optional().default(""),
+  cancellationPolicy: z.string().trim().max(2000).optional().default(""),
+});
+
+export const reviewSchema = z.object({
+  rating: z.number().int().min(1).max(5),
+  comment: z.string().trim().max(2000).optional().default(""),
+});
+
+export const messageSchema = z.object({
+  body: z.string().trim().min(1).max(2000),
 });
 
 export const bookingSchema = z.object({

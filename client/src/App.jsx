@@ -1,5 +1,6 @@
 import { Routes, Route } from "react-router-dom";
 import Navbar from "./components/Navbar.jsx";
+import BottomNav from "./components/BottomNav.jsx";
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import Home from "./pages/Home.jsx";
 import ListingDetail from "./pages/ListingDetail.jsx";
@@ -9,6 +10,10 @@ import HostDashboard from "./pages/HostDashboard.jsx";
 import CreateListing from "./pages/CreateListing.jsx";
 import EditListing from "./pages/EditListing.jsx";
 import MyTrips from "./pages/MyTrips.jsx";
+import Wishlists from "./pages/Wishlists.jsx";
+import Messages from "./pages/Messages.jsx";
+import MessageThread from "./pages/MessageThread.jsx";
+import Profile from "./pages/Profile.jsx";
 
 export default function App() {
   return (
@@ -25,6 +30,38 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <MyTrips />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/wishlists"
+            element={
+              <ProtectedRoute>
+                <Wishlists />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/messages"
+            element={
+              <ProtectedRoute>
+                <Messages />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/messages/:bookingId"
+            element={
+              <ProtectedRoute>
+                <MessageThread />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <Profile />
               </ProtectedRoute>
             }
           />
@@ -55,6 +92,7 @@ export default function App() {
           <Route path="*" element={<div className="page"><p>Page not found.</p></div>} />
         </Routes>
       </main>
+      <BottomNav />
     </div>
   );
 }
