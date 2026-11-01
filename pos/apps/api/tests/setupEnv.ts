@@ -8,3 +8,6 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 process.env.DATABASE_URL = `file:${path.join(here, "test.db")}`;
 process.env.DATABASE_PROVIDER = "sqlite";
 process.env.NODE_ENV = "test";
+// Deterministic provider order for barcode-lookup tests (Amazon stays
+// unconfigured without real credentials, so it's naturally skipped).
+process.env.BARCODE_LOOKUP_PROVIDERS = "upcitemdb,openfoodfacts,amazon";

@@ -18,6 +18,7 @@ import { stockRouter } from "./modules/inventory/stock.routes.js";
 import { purchaseOrdersRouter } from "./modules/inventory/purchaseOrders.routes.js";
 import { stockCountsRouter } from "./modules/inventory/stockCounts.routes.js";
 import { salesRouter } from "./modules/sales/sales.routes.js";
+import { barcodeLookupRouter } from "./modules/barcodeLookup/barcodeLookup.routes.js";
 
 export function buildApp() {
   const app = express();
@@ -45,6 +46,7 @@ export function buildApp() {
   app.use("/api/purchase-orders", purchaseOrdersRouter);
   app.use("/api/stock-counts", stockCountsRouter);
   app.use("/api/sales", salesRouter);
+  app.use("/api/barcode-lookup", barcodeLookupRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
