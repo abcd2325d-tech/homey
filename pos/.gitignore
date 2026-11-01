@@ -11,8 +11,14 @@ apps/api/prisma/*.db-journal
 apps/api/*.db
 apps/api/*.db-journal
 apps/api/tests/test.db*
+apps/api/prisma/e2e.db*
+
+# Playwright
+apps/web/playwright-report/
+apps/web/test-results/
 
 # Frontend
 apps/web/dist/
+apps/web/*.tsbuildinfo
 
 coverage/

@@ -1,7 +1,8 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuthStore } from "../store/auth.js";
+import type { Role } from "@pos/shared";
 
-const links = [
+const links: { to: string; label: string; roles: Role[] }[] = [
   { to: "/pos", label: "Register", roles: ["ADMIN", "MANAGER", "CASHIER"] },
   { to: "/inventory/products", label: "Products", roles: ["ADMIN", "MANAGER"] },
   { to: "/inventory/stock", label: "Stock", roles: ["ADMIN", "MANAGER"] },
@@ -9,7 +10,7 @@ const links = [
   { to: "/inventory/stock-counts", label: "Stock Counts", roles: ["ADMIN", "MANAGER"] },
   { to: "/reports", label: "Reports", roles: ["ADMIN", "MANAGER"] },
   { to: "/settings", label: "Settings", roles: ["ADMIN"] }
-] as const;
+];
 
 export function Layout() {
   const { user, logout } = useAuthStore();

@@ -96,7 +96,12 @@ export function PosPage() {
 
   async function startNewSale() {
     if (sale && sale.lines.length > 0 && (sale.status === "OPEN" || sale.status === "HELD")) {
-      await posApi.hold(sale.id, "Auto-held (new sale started)");
+      try {
+        await posApi.hold(sale.id, "Auto-held (new sale started)");
+      } catch {
+        // The in-progress cart couldn't be held (e.g. already completed/voided
+        // elsewhere) — starting a fresh sale still shouldn't be blocked by that.
+      }
     }
     const res = await posApi.createSale(locationId);
     setSale(res.data);
@@ -240,6 +245,7 @@ export function PosPage() {
           onClose={() => setShowPayment(false)}
           onCompleted={(completed) => {
             setShowPayment(false);
+            setSale(completed);
             setLastReceipt(completed);
           }}
         />
