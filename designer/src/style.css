@@ -12,6 +12,10 @@
   color-scheme: dark;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -629,4 +633,26 @@ body.drawing .hint {
 }
 body.drawing .viewport canvas {
   cursor: crosshair;
+}
+
+/* ---------- push / pull bar ---------- */
+.pullbar {
+  border-color: #ffc93c;
+}
+.pullbar .drawbar-text strong {
+  color: #ffc93c;
+}
+.pull-num {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.pull-num input {
+  width: 72px;
+}
+body.pulling .hint {
+  opacity: 0;
 }

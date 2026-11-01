@@ -24,6 +24,7 @@ npm run dev        # open http://localhost:5174
 | **Spin shape** | Draw half of a side outline → it spins into a round object (cup, vase, bottle, chess piece) |
 | **Align centers** | Lines up the centres of the selected objects with the last one picked |
 | **Move / Rotate / Resize** | Drag the arrows on the selected object (`W` / `E` / `R`) or type exact numbers |
+| **Push / Pull** | Like Fusion 360's Press Pull: tap a face, drag the yellow arrow (or type a distance) to make the object thicker or thinner from that side. Holes keep their size; pushing in stops before the next wall (`Q`) |
 | **Snap to grid** | Moves in 0.5 steps, rotates in 15° steps, resizes in 0.25 steps |
 | **Solid / Hole** | Turn any shape into a "hole" (`H`) |
 | **Combine** | Glue the selected shapes into one object; holes are cut out (`G`) |

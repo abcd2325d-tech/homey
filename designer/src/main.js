@@ -200,6 +200,10 @@ resize();
 
 renderer.setAnimationLoop(() => {
   orbit.update();
+  if (pullArrow.visible) {
+    // Keep the arrow the same size on screen.
+    pullArrow.scale.setScalar(camera.position.distanceTo(pullArrow.position) * 0.075);
+  }
   renderer.render(scene, camera);
 });
 
@@ -366,8 +370,9 @@ function setSelection(list) {
     o.material.emissiveIntensity = sel ? 0.22 : 0;
   }
   const p = primary();
-  if (p && p.visible) transform.attach(p);
+  if (p && p.visible && !pull.on) transform.attach(p);
   else transform.detach();
+  if (pull.mesh && !selection.includes(pull.mesh)) clearPullFace();
   refreshUI();
 }
 
@@ -401,6 +406,7 @@ function commit() {
 }
 
 function restore(snap) {
+  clearPullFace();
   const ids = selectionIds();
   load(JSON.parse(snap));
   try {
@@ -436,7 +442,22 @@ function applySnap() {
 applySnap();
 
 function setMode(mode) {
-  transform.setMode(mode);
+  const wasPull = pull.on;
+  pull.on = mode === 'pull';
+  if (pull.on) {
+    if (draw.active) cancelDraw();
+    transform.detach();
+    const p = primary();
+    setSelection(p ? [p] : []);
+  } else {
+    transform.setMode(mode);
+    if (wasPull) {
+      clearPullFace();
+      setSelection(selection);
+    }
+  }
+  $('pullbar').hidden = !pull.on;
+  document.body.classList.toggle('pulling', pull.on);
   document.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
 }
 
@@ -847,6 +868,15 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 
   setPointer(e);
   const hit = raycaster.intersectObjects(objects.filter((o) => o.visible), false)[0];
+  if (pull.on) {
+    if (hit) {
+      setSelection([hit.object]);
+      pickPullFace(hit);
+    } else {
+      setSelection([]);
+    }
+    return;
+  }
   const additive = e.shiftKey || e.ctrlKey || e.metaKey || multiMode;
 
   if (!hit) {
@@ -860,6 +890,353 @@ renderer.domElement.addEventListener('pointerup', (e) => {
     setSelection([obj]);
   }
 });
+
+/* ------------------------------------------------------------------ *
+ * Push / Pull (like Fusion 360's Press Pull)
+ *  - tap a flat face, drag the arrow: only that face moves, so the object
+ *    gets thicker or thinner on that side (holes and other details keep
+ *    their size)
+ *  - on a curved surface it stretches the object from that side instead
+ * ------------------------------------------------------------------ */
+const pull = { on: false, mesh: null, face: null, drag: null };
+
+const PULL_COLOR = 0xffc93c;
+const pullArrow = new THREE.Group();
+{
+  const mat = new THREE.MeshBasicMaterial({ color: PULL_COLOR, depthTest: false, transparent: true });
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 1, 12), mat);
+  shaft.position.y = 0.5;
+  const head = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.38, 20), mat);
+  head.position.y = 1.15;
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.09, 16, 12), mat);
+  // A fat invisible grab area, so the arrow is easy to catch with a finger.
+  const grab = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.42, 0.42, 1.8, 12),
+    new THREE.MeshBasicMaterial({ visible: false }),
+  );
+  grab.position.y = 0.75;
+  grab.name = 'grab';
+  pullArrow.add(shaft, head, ball, grab);
+  pullArrow.traverse((o) => (o.renderOrder = 20));
+  pullArrow.visible = false;
+  scene.add(pullArrow);
+}
+const pullHighlight = new THREE.Mesh(
+  new THREE.BufferGeometry(),
+  new THREE.MeshBasicMaterial({
+    color: PULL_COLOR, transparent: true, opacity: 0.45, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, side: THREE.DoubleSide,
+  }),
+);
+pullHighlight.renderOrder = 5;
+
+// Positions with the object's scale applied (= what the geometry becomes once baked).
+function scaledPositions(mesh) {
+  const src = mesh.geometry.attributes.position.array;
+  const out = new Float32Array(src.length);
+  const { x, y, z } = mesh.scale;
+  for (let i = 0; i < src.length; i += 3) {
+    out[i] = src[i] * x;
+    out[i + 1] = src[i + 1] * y;
+    out[i + 2] = src[i + 2] * z;
+  }
+  return out;
+}
+
+function triangleIndices(geometry) {
+  if (geometry.index) return geometry.index.array;
+  const n = geometry.attributes.position.count;
+  const idx = new Uint32Array(n);
+  for (let i = 0; i < n; i++) idx[i] = i;
+  return idx;
+}
+
+const _a = new THREE.Vector3();
+const _b = new THREE.Vector3();
+const _c = new THREE.Vector3();
+function triArea(P, i, j, k) {
+  _a.fromArray(P, i * 3);
+  _b.fromArray(P, j * 3).sub(_a);
+  _c.fromArray(P, k * 3).sub(_a);
+  return _b.cross(_c).length() / 2;
+}
+
+// Find every vertex on the plane n·p = d. Returns null if that flat area is
+// too small to be a real face (e.g. one facet of a sphere).
+function planeFace(mesh, n, d) {
+  const P = scaledPositions(mesh);
+  const tris = triangleIndices(mesh.geometry);
+  const count = P.length / 3;
+  mesh.geometry.computeBoundingSphere();
+  const eps = 1e-4 * (mesh.geometry.boundingSphere.radius * Math.max(...mesh.scale.toArray()) + 1);
+  const onPlane = new Uint8Array(count);
+  const h = new Float32Array(count); // height of each point along the face direction
+  for (let i = 0; i < count; i++) {
+    h[i] = n.x * P[i * 3] + n.y * P[i * 3 + 1] + n.z * P[i * 3 + 2];
+    if (Math.abs(h[i] - d) < eps) onPlane[i] = 1;
+  }
+  // The "anchor" is the nearest real wall behind the face: the highest point
+  // (below the face) on a surface that is not parallel to the push direction.
+  // Everything between the anchor and the face is stretched evenly, so faces
+  // that run along the push direction never fold over.
+  let anchor = -Infinity;
+  let faceArea = 0;
+  let totalArea = 0;
+  const faceTris = [];
+  const centroid = new THREE.Vector3();
+  const tn = new THREE.Vector3();
+  for (let t = 0; t < tris.length; t += 3) {
+    const [i, j, k] = [tris[t], tris[t + 1], tris[t + 2]];
+    const area = triArea(P, i, j, k);
+    totalArea += area;
+    if (area > 1e-12) {
+      tn.copy(_b).normalize(); // triArea left this triangle's cross product in _b
+      if (Math.abs(tn.dot(n)) > 0.01) {
+        for (const v of [i, j, k]) if (h[v] < d - eps && h[v] > anchor) anchor = h[v];
+      }
+    }
+    if (onPlane[i] && onPlane[j] && onPlane[k]) {
+      faceArea += area;
+      faceTris.push(i, j, k);
+      for (const v of [i, j, k]) centroid.add(_a.fromArray(P, v * 3).multiplyScalar(area / 3));
+    }
+  }
+  if (!faceTris.length || faceArea / totalArea < 0.025 || anchor === -Infinity) return null;
+  centroid.divideScalar(faceArea);
+  const verts = [];
+  for (let i = 0; i < count; i++) if (h[i] > anchor + eps) verts.push(i);
+  const heights = Float32Array.from(verts, (v) => h[v] - anchor);
+  return { kind: 'plane', n: n.clone(), d, anchor, verts: Uint32Array.from(verts), heights, faceTris, centroid };
+}
+
+function pickPullFace(hit) {
+  const mesh = hit.object;
+  clearPullFace();
+  const P = scaledPositions(mesh);
+  const { a, b, c } = hit.face;
+  const A = new THREE.Vector3().fromArray(P, a * 3);
+  const n = new THREE.Vector3().fromArray(P, b * 3).sub(A)
+    .cross(new THREE.Vector3().fromArray(P, c * 3).sub(A)).normalize();
+  let face = planeFace(mesh, n, n.dot(A));
+  if (!face) {
+    // Curved surface: stretch along the object's own axis closest to the surface direction.
+    const ln = hit.face.normal;
+    const ax = [Math.abs(ln.x), Math.abs(ln.y), Math.abs(ln.z)];
+    const axis = ax.indexOf(Math.max(...ax));
+    face = { kind: 'stretch', axis, sign: Math.sign(ln.getComponent(axis)) || 1 };
+  }
+  pull.mesh = mesh;
+  pull.face = face;
+  placePullArrow();
+  $('pullHelp').textContent = face.kind === 'plane'
+    ? 'Drag the yellow arrow (or type a distance) to push or pull this face.'
+    : 'Curved surface: dragging the arrow stretches the object from this side.';
+}
+
+function clearPullFace() {
+  pull.mesh = null;
+  pull.face = null;
+  pull.drag = null;
+  pullArrow.visible = false;
+  pullHighlight.removeFromParent();
+  if ($('pullHelp')) $('pullHelp').textContent = 'Tap a face of any object, then drag the yellow arrow to make it thicker or thinner.';
+}
+
+// World-space start point and direction of the arrow for the current face.
+function pullAxis() {
+  const { mesh, face } = pull;
+  mesh.updateMatrixWorld();
+  if (face.kind === 'plane') {
+    const origin = face.centroid.clone().applyQuaternion(mesh.quaternion).add(mesh.position);
+    return { origin, dir: face.n.clone().applyQuaternion(mesh.quaternion).normalize() };
+  }
+  mesh.geometry.computeBoundingBox();
+  const bb = mesh.geometry.boundingBox;
+  const local = bb.getCenter(new THREE.Vector3());
+  local.setComponent(face.axis, face.sign > 0 ? bb.max.getComponent(face.axis) : bb.min.getComponent(face.axis));
+  const dirLocal = new THREE.Vector3().setComponent(face.axis, face.sign);
+  return {
+    origin: mesh.localToWorld(local),
+    dir: dirLocal.applyQuaternion(mesh.quaternion).normalize(),
+  };
+}
+
+function placePullArrow() {
+  const { origin, dir } = pullAxis();
+  pullArrow.position.copy(origin);
+  pullArrow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+  pullArrow.visible = true;
+  const face = pull.face;
+  if (face.kind === 'plane') {
+    // Highlight the face (child of the mesh, so it uses the mesh's own coordinates).
+    const src = pull.mesh.geometry.attributes.position.array;
+    const pts = new Float32Array(face.faceTris.length * 3);
+    face.faceTris.forEach((v, i) => pts.set(src.subarray(v * 3, v * 3 + 3), i * 3));
+    pullHighlight.geometry.dispose();
+    pullHighlight.geometry = new THREE.BufferGeometry();
+    pullHighlight.geometry.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+    pull.mesh.add(pullHighlight);
+  } else {
+    pullHighlight.removeFromParent();
+  }
+}
+
+// Bake scale into the geometry so face moves happen in real units.
+function makePullable(mesh) {
+  const s = mesh.scale;
+  if (mesh.userData.type === 'custom' && s.x === 1 && s.y === 1 && s.z === 1) return;
+  const g = mesh.geometry.clone();
+  g.applyMatrix4(new THREE.Matrix4().makeScale(s.x, s.y, s.z));
+  for (const key of Object.keys(g.attributes)) {
+    if (key !== 'position' && key !== 'normal') g.deleteAttribute(key);
+  }
+  if (ownsGeometry(mesh)) mesh.geometry.dispose();
+  mesh.geometry = g;
+  mesh.scale.set(1, 1, 1);
+  mesh.userData.type = 'custom';
+  mesh.userData.text = undefined;
+}
+
+function beginPull() {
+  const { mesh, face } = pull;
+  if (face.kind === 'plane') {
+    makePullable(mesh);
+    if (pullHighlight.parent !== mesh) mesh.add(pullHighlight);
+    pull.drag = { orig: mesh.geometry.attributes.position.array.slice(), dist: 0, axis: pullAxis() };
+  } else {
+    pull.drag = {
+      size: getSize(mesh),
+      pos: mesh.position.clone(),
+      dist: 0,
+      axis: pullAxis(),
+    };
+  }
+}
+
+function applyPull(dist) {
+  const { mesh, face, drag } = pull;
+  if (snapOn) dist = Math.round(dist / 0.25) * 0.25;
+  if (face.kind === 'plane') {
+    const depth = face.d - face.anchor;
+    drag.limited = dist < MIN_SIZE - depth;
+    dist = Math.max(dist, MIN_SIZE - depth);
+    const stretch = dist / depth;
+    const pos = mesh.geometry.attributes.position;
+    const arr = pos.array;
+    arr.set(drag.orig);
+    face.verts.forEach((v, i) => {
+      const move = face.heights[i] * stretch;
+      arr[v * 3] += face.n.x * move;
+      arr[v * 3 + 1] += face.n.y * move;
+      arr[v * 3 + 2] += face.n.z * move;
+    });
+    pos.needsUpdate = true;
+    mesh.geometry.computeBoundingBox();
+    mesh.geometry.computeBoundingSphere();
+    const hp = pullHighlight.geometry.attributes.position;
+    if (hp) {
+      face.faceTris.forEach((v, i) => hp.array.set(arr.subarray(v * 3, v * 3 + 3), i * 3));
+      hp.needsUpdate = true;
+    }
+  } else {
+    const size = drag.size.clone();
+    const start = size.getComponent(face.axis);
+    const next = Math.max(MIN_SIZE, start + dist);
+    dist = next - start;
+    size.setComponent(face.axis, next);
+    setSize(mesh, size);
+    mesh.position.copy(drag.pos).addScaledVector(drag.axis.dir, dist / 2);
+  }
+  drag.dist = dist;
+  pullArrow.position.copy(drag.axis.origin).addScaledVector(drag.axis.dir, dist);
+  $('pullDist').value = fmt(dist);
+  refreshPanel();
+}
+
+function endPull() {
+  const { mesh, face, drag } = pull;
+  pull.drag = null;
+  if (!drag) return;
+  if (face.kind === 'plane') {
+    const g = mesh.geometry;
+    // Re-centre the geometry on the object's origin.
+    g.computeBoundingBox();
+    const c = g.boundingBox.getCenter(new THREE.Vector3());
+    g.translate(-c.x, -c.y, -c.z);
+    mesh.position.add(c.clone().applyQuaternion(mesh.quaternion));
+    g.computeBoundingBox();
+    mesh.userData.base = g.boundingBox.getSize(new THREE.Vector3());
+    mesh.userData.geomData = geometryToData(g);
+    face.d = face.d + drag.dist - face.n.dot(c);
+    pull.face = planeFace(mesh, face.n, face.d) || null;
+  }
+  $('pullDist').value = '0';
+  if (Math.abs(drag.dist) > 1e-6) {
+    commit();
+    toast(drag.limited
+      ? `Pushed ${fmt(Math.abs(drag.dist))} units. It stops before the next wall or hole.`
+      : `${drag.dist > 0 ? 'Pulled' : 'Pushed'} ${fmt(Math.abs(drag.dist))} units.`);
+  }
+  if (pull.face) placePullArrow();
+  else clearPullFace();
+  refreshPanel();
+}
+
+// Closest point on the arrow's line to the pointer ray, as a distance along the arrow.
+function pullParam(e, axis) {
+  setPointer(e);
+  const { origin: O, direction: d } = raycaster.ray;
+  const u = axis.dir;
+  const w0 = O.clone().sub(axis.origin);
+  const b = d.dot(u);
+  const denom = 1 - b * b;
+  if (denom < 1e-4) return null; // looking straight down the arrow
+  return (w0.dot(u) - b * w0.dot(d)) / denom;
+}
+
+// Capture-phase listeners on the viewport run before the camera controls, so
+// grabbing the arrow never spins the view.
+viewport.addEventListener('pointerdown', (e) => {
+  if (!pull.on || !pull.face || e.button !== 0) return;
+  setPointer(e);
+  if (!raycaster.intersectObject(pullArrow, true).length) return;
+  e.stopPropagation();
+  beginPull();
+  const t0 = pullParam(e, pull.drag.axis);
+  if (t0 === null) {
+    pull.drag = null;
+    return;
+  }
+  pull.drag.t0 = t0;
+  pull.drag.pointerId = e.pointerId;
+  viewport.setPointerCapture(e.pointerId);
+}, { capture: true });
+
+viewport.addEventListener('pointermove', (e) => {
+  if (!pull.drag || e.pointerId !== pull.drag.pointerId) return;
+  e.stopPropagation();
+  const t = pullParam(e, pull.drag.axis);
+  if (t !== null) applyPull(t - pull.drag.t0);
+}, { capture: true });
+
+for (const type of ['pointerup', 'pointercancel']) {
+  viewport.addEventListener(type, (e) => {
+    if (!pull.drag || e.pointerId !== pull.drag.pointerId) return;
+    e.stopPropagation();
+    activePointers.delete(e.pointerId);
+    endPull();
+  }, { capture: true });
+}
+
+function pullByTyping(value) {
+  if (!pull.face || !Number.isFinite(value) || value === 0) return;
+  beginPull();
+  const keepSnap = snapOn;
+  snapOn = false; // typed numbers are exact
+  applyPull(value);
+  snapOn = keepSnap;
+  endPull();
+}
 
 /* ------------------------------------------------------------------ *
  * Draw tool
@@ -906,6 +1283,7 @@ const DRAW_HELP = {
 
 function startDraw(kind) {
   if (draw.active) cancelDraw();
+  if (pull.on) setMode('translate');
   setSelection([]);
   draw.active = true;
   draw.kind = kind;
@@ -1244,6 +1622,7 @@ function onVecInput(e) {
     else size[axis] = v;
     setSize(p, size);
   }
+  if (pull.mesh === p) clearPullFace(); // the face moved; pick it again
   refreshPanel();
   commit();
 }
@@ -1263,6 +1642,11 @@ for (const color of PALETTE) {
 
 $('pColor').addEventListener('input', (e) => setColor(e.target.value, false));
 $('pColor').addEventListener('change', (e) => setColor(e.target.value, true));
+$('pullDist').addEventListener('change', (e) => {
+  pullByTyping(parseFloat(e.target.value));
+  e.target.value = '0';
+});
+$('pullDist').addEventListener('keydown', (e) => e.key === 'Enter' && e.target.blur());
 $('pText').addEventListener('change', (e) => {
   const p = primary();
   if (p) setText(p, e.target.value);
@@ -1409,6 +1793,7 @@ const actions = {
   'draw-undo': undoDrawPoint,
   'draw-cancel': cancelDraw,
   'draw-finish': finishDraw,
+  'pull-done': () => setMode('translate'),
   help: () => ($('help').hidden = false),
   'help-close': () => ($('help').hidden = true),
   'toggle-inspector': () => document.body.classList.toggle('show-inspector'),
@@ -1461,6 +1846,8 @@ window.addEventListener('keydown', (e) => {
   else if (mod && k === 's') saveProject();
   else if (mod) handled = false;
   else if (k === 'w') setMode('translate');
+  else if (k === 'q') setMode('pull');
+  else if (k === 'escape' && pull.face) clearPullFace();
   else if (k === 'e') setMode('rotate');
   else if (k === 'r') setMode('scale');
   else if (k === 'h') toggleHole();
@@ -1489,4 +1876,4 @@ commit();
 if (objects.length) frame();
 
 // Handy for debugging from the console.
-window.shaper = { scene, camera, objects, serialize, addShape, combineSelection, setSelection, draw };
+window.shaper = { scene, camera, objects, serialize, addShape, combineSelection, setSelection, draw, pull, pullArrow };
