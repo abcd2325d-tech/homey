@@ -9,6 +9,10 @@ import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
 import { usersRouter } from "./modules/users/users.routes.js";
 import { auditLogRouter } from "./modules/auditLog/auditLog.routes.js";
+import { categoriesRouter } from "./modules/catalog/categories.routes.js";
+import { suppliersRouter } from "./modules/catalog/suppliers.routes.js";
+import { taxRatesRouter } from "./modules/catalog/taxRates.routes.js";
+import { productsRouter } from "./modules/catalog/products.routes.js";
 
 export function buildApp() {
   const app = express();
@@ -27,6 +31,10 @@ export function buildApp() {
   app.use("/api/auth", authRouter);
   app.use("/api/users", usersRouter);
   app.use("/api/audit-log", auditLogRouter);
+  app.use("/api/categories", categoriesRouter);
+  app.use("/api/suppliers", suppliersRouter);
+  app.use("/api/tax-rates", taxRatesRouter);
+  app.use("/api/products", productsRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
