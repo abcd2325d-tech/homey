@@ -1,0 +1,63 @@
+version: "3.9"
+
+# Production-shaped compose file: Postgres + the API against it.
+# For local day-to-day dev, just run `npm run dev:api` / `npm run dev:web`
+# against SQLite (DATABASE_PROVIDER=sqlite) — no containers needed.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pos
+      POSTGRES_PASSWORD: pos
+      POSTGRES_DB: pos
+    ports:
+      - "5432:5432"
+    volumes:
+      - pos_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pos"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_PROVIDER: postgresql
+      DATABASE_URL: postgresql://pos:pos@db:5432/pos
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change-me-access}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-me-refresh}
+      JWT_ACCESS_TTL: 15m
+      JWT_REFRESH_TTL: 30d
+      PORT: 4000
+      NODE_ENV: production
+      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://localhost:5173}
+      BARCODE_LOOKUP_PROVIDERS: ${BARCODE_LOOKUP_PROVIDERS:-openfoodfacts,amazon}
+      UPCITEMDB_API_KEY: ${UPCITEMDB_API_KEY:-}
+      AMAZON_PAAPI_ACCESS_KEY: ${AMAZON_PAAPI_ACCESS_KEY:-}
+      AMAZON_PAAPI_SECRET_KEY: ${AMAZON_PAAPI_SECRET_KEY:-}
+      AMAZON_PAAPI_PARTNER_TAG: ${AMAZON_PAAPI_PARTNER_TAG:-}
+    ports:
+      - "4000:4000"
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_URL: http://localhost:4000/api
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "5173:80"
+
+volumes:
+  pos_db_data:

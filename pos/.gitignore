@@ -1,0 +1,18 @@
+node_modules/
+dist/
+build/
+.env
+*.local
+
+# Prisma
+apps/api/prisma/schema.prisma
+apps/api/prisma/*.db
+apps/api/prisma/*.db-journal
+apps/api/*.db
+apps/api/*.db-journal
+apps/api/tests/test.db*
+
+# Frontend
+apps/web/dist/
+
+coverage/
