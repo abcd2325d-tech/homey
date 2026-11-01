@@ -303,7 +303,9 @@ function removeObject(mesh) {
 
 function clearAll() {
   transform.detach();
+  deselectSketch();
   [...objects].forEach(removeObject);
+  [...sketches].forEach(removeSketch);
 }
 
 function describe(mesh) {
@@ -324,7 +326,7 @@ function describe(mesh) {
 }
 
 function serialize() {
-  return { app: 'shaper3d', version: 1, objects: objects.map(describe) };
+  return { app: 'shaper3d', version: 1, objects: objects.map(describe), sketches: sketches.map(sketchData) };
 }
 
 function load(data) {
@@ -332,6 +334,9 @@ function load(data) {
   for (const desc of data.objects) {
     if (desc.type !== 'custom' && desc.type !== 'text' && !SHAPES[desc.type]) continue;
     addObject(createMesh(desc));
+  }
+  for (const sk of data.sketches || []) {
+    if (sk && sk.plane && ['rect', 'circle', 'poly'].includes(sk.kind)) addSketch(sk);
   }
 }
 
@@ -364,6 +369,7 @@ const primary = () => selection[selection.length - 1] || null;
 
 function setSelection(list) {
   selection = list.filter((m) => objects.includes(m));
+  if (selection.length && selectedSketch) deselectSketch();
   for (const o of objects) {
     const sel = selection.includes(o);
     o.material.emissive.set(sel ? 0x2a5cff : 0x000000);
@@ -452,7 +458,7 @@ function setMode(mode) {
   } else {
     transform.setMode(mode);
     if (wasPull) {
-      clearPullFace();
+      if (!selectedSketch) clearPullFace();
       setSelection(selection);
     }
   }
@@ -803,7 +809,7 @@ const VIEWS = {
   right: [1, 0.0001, 0],
 };
 
-function frame(list = selection.length ? selection : objects.filter((o) => o.visible)) {
+function frame(list = selection.length ? selection : [...objects.filter((o) => o.visible), ...sketches]) {
   const box = new THREE.Box3();
   if (list.length) list.forEach((o) => box.expandByObject(o));
   else box.set(new THREE.Vector3(-4, 0, -4), new THREE.Vector3(4, 2, 4));
@@ -868,6 +874,12 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 
   setPointer(e);
   const hit = raycaster.intersectObjects(objects.filter((o) => o.visible), false)[0];
+  const sketchHit = raycaster.intersectObjects(sketches.map((g) => g.fill), false)[0];
+  if (sketchHit && (!hit || sketchHit.distance <= hit.distance + 0.05)) {
+    selectSketch(sketchHit.object.userData.sketch);
+    return;
+  }
+  deselectSketch();
   if (pull.on) {
     if (hit) {
       setSelection([hit.object]);
@@ -1045,6 +1057,12 @@ function clearPullFace() {
 // World-space start point and direction of the arrow for the current face.
 function pullAxis() {
   const { mesh, face } = pull;
+  if (face.kind === 'sketch') {
+    const d = face.sketch.userData;
+    const plane = planeFromData(d.plane);
+    const c = sketchCenter(d);
+    return { origin: fromUV(plane, c.x, c.y), dir: plane.n.clone() };
+  }
   mesh.updateMatrixWorld();
   if (face.kind === 'plane') {
     const origin = face.centroid.clone().applyQuaternion(mesh.quaternion).add(mesh.position);
@@ -1067,7 +1085,7 @@ function placePullArrow() {
   pullArrow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
   pullArrow.visible = true;
   const face = pull.face;
-  if (face.kind === 'plane') {
+  if (face.kind === 'plane' && pull.mesh) {
     // Highlight the face (child of the mesh, so it uses the mesh's own coordinates).
     const src = pull.mesh.geometry.attributes.position.array;
     const pts = new Float32Array(face.faceTris.length * 3);
@@ -1099,7 +1117,9 @@ function makePullable(mesh) {
 
 function beginPull() {
   const { mesh, face } = pull;
-  if (face.kind === 'plane') {
+  if (face.kind === 'sketch') {
+    pull.drag = { dist: 0, axis: pullAxis() };
+  } else if (face.kind === 'plane') {
     makePullable(mesh);
     if (pullHighlight.parent !== mesh) mesh.add(pullHighlight);
     pull.drag = { orig: mesh.geometry.attributes.position.array.slice(), dist: 0, axis: pullAxis() };
@@ -1116,7 +1136,9 @@ function beginPull() {
 function applyPull(dist) {
   const { mesh, face, drag } = pull;
   if (snapOn) dist = Math.round(dist / 0.25) * 0.25;
-  if (face.kind === 'plane') {
+  if (face.kind === 'sketch') {
+    previewSketchSolid(face.sketch.userData, dist);
+  } else if (face.kind === 'plane') {
     const depth = face.d - face.anchor;
     drag.limited = dist < MIN_SIZE - depth;
     dist = Math.max(dist, MIN_SIZE - depth);
@@ -1157,6 +1179,14 @@ function endPull() {
   const { mesh, face, drag } = pull;
   pull.drag = null;
   if (!drag) return;
+  if (face.kind === 'sketch') {
+    sketchPreview.visible = false;
+    $('pullDist').value = '0';
+    const g = face.sketch;
+    extrudeSketch(g, drag.dist);
+    if (sketches.includes(g) && selectedSketch === g) placePullArrow(); // nothing happened: arrow back
+    return;
+  }
   if (face.kind === 'plane') {
     const g = mesh.geometry;
     // Re-centre the geometry on the object's origin.
@@ -1197,7 +1227,7 @@ function pullParam(e, axis) {
 // Capture-phase listeners on the viewport run before the camera controls, so
 // grabbing the arrow never spins the view.
 viewport.addEventListener('pointerdown', (e) => {
-  if (!pull.on || !pull.face || e.button !== 0) return;
+  if (!pull.face || e.button !== 0) return;
   setPointer(e);
   if (!raycaster.intersectObject(pullArrow, true).length) return;
   e.stopPropagation();
@@ -1239,16 +1269,264 @@ function pullByTyping(value) {
 }
 
 /* ------------------------------------------------------------------ *
- * Draw tool
- *  - "outline": tap points / drag on the ground (top view) -> extruded solid
- *  - "spin":    draw half a side profile (front view) -> spun around the axis
+ * Sketching (Shapr3D-style "sketch, then pull")
+ *  - Rectangle / Circle / Line sketches go on the ground or on any face
+ *    of a part. While drawing, live measurements follow the pointer.
+ *  - Tap a sketch and drag its arrow: pull out to add material, push in
+ *    to cut a pocket or hole into the part it was drawn on.
+ *  - Spin: draw half a side profile (front view) -> round solid.
  * ------------------------------------------------------------------ */
+const SKETCH_SNAP = 0.25;
+
+// A sketch plane: origin o, normal n and in-plane axes u, v (u × v = n).
+function makePlane(o, n) {
+  n = n.clone().normalize();
+  const u = Math.abs(n.y) < 0.9
+    ? new THREE.Vector3(0, 1, 0).cross(n).normalize()
+    : new THREE.Vector3(1, 0, 0).addScaledVector(n, -n.x).normalize();
+  const v = n.clone().cross(u).normalize();
+  return { o: o.clone(), n, u, v };
+}
+const planeToData = (p) => ({ o: p.o.toArray().map((x) => round(x, 1e5)), n: p.n.toArray(), u: p.u.toArray() });
+function planeFromData(d) {
+  const n = new THREE.Vector3().fromArray(d.n);
+  const u = new THREE.Vector3().fromArray(d.u);
+  return { o: new THREE.Vector3().fromArray(d.o), n, u, v: n.clone().cross(u).normalize() };
+}
+const planeMatrix = (p) => new THREE.Matrix4().makeBasis(p.u, p.v, p.n).setPosition(p.o);
+const fromUV = (p, x, y, lift = 0) => p.o.clone().addScaledVector(p.u, x).addScaledVector(p.v, y).addScaledVector(p.n, lift);
+function rayToUV(p) {
+  const hit = raycaster.ray.intersectPlane(new THREE.Plane(p.n, -p.n.dot(p.o)), new THREE.Vector3());
+  if (!hit) return null;
+  hit.sub(p.o);
+  return new THREE.Vector2(hit.dot(p.u), hit.dot(p.v));
+}
+const snapUV = (q) => (snapOn ? new THREE.Vector2(Math.round(q.x / SKETCH_SNAP) * SKETCH_SNAP, Math.round(q.y / SKETCH_SNAP) * SKETCH_SNAP) : q);
+
+function sketchShape(d) {
+  if (d.kind === 'rect') {
+    const { x, y, w, h } = d.rect;
+    return new THREE.Shape([
+      new THREE.Vector2(x, y), new THREE.Vector2(x + w, y), new THREE.Vector2(x + w, y + h), new THREE.Vector2(x, y + h),
+    ]);
+  }
+  if (d.kind === 'circle') return new THREE.Shape().absarc(d.circle.cx, d.circle.cy, d.circle.r, 0, Math.PI * 2, false);
+  return new THREE.Shape(d.points.map(([x, y]) => new THREE.Vector2(x, y)));
+}
+function sketchCenter(d) {
+  if (d.kind === 'rect') return new THREE.Vector2(d.rect.x + d.rect.w / 2, d.rect.y + d.rect.h / 2);
+  if (d.kind === 'circle') return new THREE.Vector2(d.circle.cx, d.circle.cy);
+  const c = new THREE.Vector2();
+  d.points.forEach(([x, y]) => c.add(new THREE.Vector2(x, y)));
+  return c.divideScalar(d.points.length);
+}
+
+const sketches = [];
+const sketchRoot = new THREE.Group();
+scene.add(sketchRoot);
+const sketchMat = (opacity) => new THREE.MeshBasicMaterial({
+  color: 0x4f9dff, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide,
+  polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+});
+const SKETCH_FILL = sketchMat(0.25);
+const SKETCH_FILL_SELECTED = sketchMat(0.55);
+const SKETCH_LINE = new THREE.LineBasicMaterial({ color: 0x9cc8ff });
+let selectedSketch = null;
+
+function addSketch(data) {
+  data = { ...data, id: data.id || crypto.randomUUID() };
+  const plane = planeFromData(data.plane);
+  const shape = sketchShape(data);
+  const g = new THREE.Group();
+  g.matrixAutoUpdate = false;
+  g.matrix.copy(planeMatrix(plane)).multiply(new THREE.Matrix4().makeTranslation(0, 0, 0.004));
+  const fill = new THREE.Mesh(new THREE.ShapeGeometry(shape, 48), SKETCH_FILL);
+  fill.renderOrder = 6;
+  fill.userData.sketch = g;
+  const line = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(shape.getPoints(48)), SKETCH_LINE);
+  line.renderOrder = 7;
+  g.add(fill, line);
+  g.userData = data;
+  g.fill = fill;
+  sketchRoot.add(g);
+  g.updateMatrixWorld(true);
+  sketches.push(g);
+  return g;
+}
+
+function removeSketch(g) {
+  if (selectedSketch === g) deselectSketch();
+  g.traverse((o) => o.geometry && o.geometry.dispose());
+  sketchRoot.remove(g);
+  sketches.splice(sketches.indexOf(g), 1);
+}
+
+const sketchData = (g) => JSON.parse(JSON.stringify(g.userData));
+
+function selectSketch(g) {
+  if (selection.length) setSelection([]);
+  deselectSketch();
+  selectedSketch = g;
+  g.fill.material = SKETCH_FILL_SELECTED;
+  pull.mesh = null;
+  pull.face = { kind: 'sketch', sketch: g };
+  placePullArrow();
+  const d = g.userData;
+  $('sketchKind').textContent = { rect: 'Rectangle', circle: 'Circle', poly: 'Shape' }[d.kind];
+  $('sketchRect').hidden = d.kind !== 'rect';
+  $('sketchCircle').hidden = d.kind !== 'circle';
+  if (d.kind === 'rect') {
+    $('skW').value = fmt(Math.abs(d.rect.w));
+    $('skH').value = fmt(Math.abs(d.rect.h));
+  } else if (d.kind === 'circle') {
+    $('skD').value = fmt(d.circle.r * 2);
+  }
+  $('skExtrude').value = '';
+  $('sketchbar').hidden = false;
+}
+
+function deselectSketch() {
+  if (!selectedSketch) return;
+  selectedSketch.fill.material = SKETCH_FILL;
+  selectedSketch = null;
+  if (pull.face && pull.face.kind === 'sketch') clearPullFace();
+  $('sketchbar').hidden = true;
+}
+
+// Change the size of the selected rectangle / circle by typing.
+function resizeSketch() {
+  const g = selectedSketch;
+  if (!g) return;
+  const d = sketchData(g);
+  if (d.kind === 'rect') {
+    const w = parseFloat($('skW').value);
+    const h = parseFloat($('skH').value);
+    if (!(w > 0) || !(h > 0)) return selectSketch(g);
+    d.rect.w = Math.sign(d.rect.w || 1) * w;
+    d.rect.h = Math.sign(d.rect.h || 1) * h;
+  } else if (d.kind === 'circle') {
+    const dia = parseFloat($('skD').value);
+    if (!(dia > 0)) return selectSketch(g);
+    d.circle.r = dia / 2;
+  }
+  const i = sketches.indexOf(g);
+  removeSketch(g);
+  const next = addSketch(d);
+  sketches.splice(sketches.indexOf(next), 1);
+  sketches.splice(i, 0, next);
+  selectSketch(next);
+  commit();
+}
+
+function deleteSelectedSketch() {
+  if (!selectedSketch) return;
+  removeSketch(selectedSketch);
+  commit();
+}
+
+// The solid you get by pulling a sketch by `dist` (negative = into the part).
+// `overlap` reaches slightly past the sketch plane so booleans join/cut cleanly.
+function sketchSolid(d, dist, overlap) {
+  const g = new THREE.ExtrudeGeometry(sketchShape(d), {
+    depth: Math.abs(dist) + overlap, bevelEnabled: false, curveSegments: 48,
+  });
+  g.translate(0, 0, dist > 0 ? -overlap : dist);
+  g.applyMatrix4(planeMatrix(planeFromData(d.plane)));
+  return g;
+}
+
+function brushFrom(geometryWorld) {
+  for (const key of Object.keys(geometryWorld.attributes)) {
+    if (key !== 'position' && key !== 'normal') geometryWorld.deleteAttribute(key);
+  }
+  geometryWorld.clearGroups();
+  const b = new Brush(geometryWorld);
+  b.updateMatrixWorld();
+  return b;
+}
+
+function booleanWith(mesh, toolWorld, op) {
+  mesh.updateMatrixWorld();
+  const evaluator = new Evaluator();
+  evaluator.attributes = ['position', 'normal'];
+  evaluator.useGroups = false;
+  const a = brushFrom(mesh.geometry.clone().applyMatrix4(mesh.matrixWorld));
+  return evaluator.evaluate(a, brushFrom(toolWorld), op).geometry;
+}
+
+function replaceGeometry(mesh, geometryWorld) {
+  geometryWorld.computeBoundingBox();
+  const center = geometryWorld.boundingBox.getCenter(new THREE.Vector3());
+  geometryWorld.translate(-center.x, -center.y, -center.z);
+  const next = toCustom(mesh, geometryWorld, center);
+  const i = objects.indexOf(mesh);
+  removeObject(mesh);
+  objects.splice(i, 0, next);
+  world.add(next);
+  return next;
+}
+
+const sketchPreview = new THREE.Mesh(
+  new THREE.BufferGeometry(),
+  new THREE.MeshStandardMaterial({ color: 0x5fbf77, transparent: true, opacity: 0.6, depthWrite: false }),
+);
+sketchPreview.visible = false;
+scene.add(sketchPreview);
+
+function previewSketchSolid(d, dist) {
+  sketchPreview.geometry.dispose();
+  if (Math.abs(dist) < 1e-6) {
+    sketchPreview.visible = false;
+    return;
+  }
+  sketchPreview.geometry = sketchSolid(d, dist, 0);
+  sketchPreview.material.color.set(dist > 0 ? 0x5fbf77 : 0xff6b5e);
+  sketchPreview.visible = true;
+}
+
+function extrudeSketch(g, dist) {
+  if (Math.abs(dist) < 1e-6) return;
+  const d = sketchData(g);
+  const host = objects.find((o) => o.userData.id === d.hostId && o.visible);
+  if (dist < 0 && !host) {
+    toast('Pull outward to make a solid. Pushing in cuts only when the sketch is drawn on a part.');
+    return;
+  }
+  if (!host) {
+    removeSketch(g);
+    addGeometryObject(sketchSolid(d, dist, 0), 'Body');
+    toast(`Pulled up ${fmt(dist)} units.`);
+    return;
+  }
+  let result;
+  try {
+    result = booleanWith(host, sketchSolid(d, dist, 0.02), dist > 0 ? ADDITION : SUBTRACTION);
+  } catch (err) {
+    console.error(err);
+  }
+  if (!result || !result.attributes.position || result.attributes.position.count === 0) {
+    toast(result ? 'That would remove the whole part.' : 'Could not do that. Try a slightly different size.');
+    return;
+  }
+  removeSketch(g);
+  const next = replaceGeometry(host, result);
+  setSelection([next]);
+  commit();
+  toast(dist > 0 ? `Added ${fmt(dist)} units to "${next.name}".` : `Cut ${fmt(-dist)} units into "${next.name}".`);
+}
+
+/* ---------- drawing sketches ---------- */
 const draw = {
   active: false,
-  kind: null,
-  points: [], // THREE.Vector3 on the drawing plane
+  kind: null, // 'rect' | 'circle' | 'line' | 'spin'
+  plane: null, // sketch plane (rect/circle/line)
+  hostId: null,
+  spinPlane: new THREE.Plane(new THREE.Vector3(0, 0, 1), 0),
+  points: [], // line: Vector2 (plane coords); spin: Vector3 (world)
+  anchor: null, // rect corner / circle centre
+  anchorJustSet: false,
+  cursor: null,
   stroke: null,
-  plane: new THREE.Plane(),
   preview: new THREE.Group(),
   savedView: null,
 };
@@ -1276,38 +1554,41 @@ for (const o of [previewLine, mirrorLine, previewDots, spinAxis]) {
 draw.preview.add(previewLine, mirrorLine, previewDots, spinAxis);
 draw.preview.visible = false;
 
-const DRAW_HELP = {
-  outline: 'Tap to place corners, or drag to draw freely. Tap the first point or press Finish to close the shape.',
-  spin: 'Draw the right half of the side outline. It spins around the green line to make round objects like cups and vases.',
+const DRAW_INFO = {
+  rect: ['Rectangle', 'Drag from corner to corner (or tap two corners) on the ground or on any face of a part.'],
+  circle: ['Circle', 'Drag from the centre outward (or tap the centre, then the edge) on the ground or on any face.'],
+  line: ['Line', 'Tap to place corners, or drag to draw freely, on the ground or any face. Tap the first point or Finish to close it.'],
+  spin: ['Spin shape', 'Draw the right half of the side outline. It spins around the green line to make round objects like cups and vases.'],
 };
 
 function startDraw(kind) {
   if (draw.active) cancelDraw();
   if (pull.on) setMode('translate');
+  deselectSketch();
   setSelection([]);
-  draw.active = true;
-  draw.kind = kind;
-  draw.points = [];
-  draw.stroke = null;
+  Object.assign(draw, {
+    active: true, kind, plane: null, hostId: null, points: [], anchor: null, cursor: null, stroke: null,
+  });
   draw.savedView = { pos: camera.position.clone(), target: orbit.target.clone() };
-  if (kind === 'outline') draw.plane.set(new THREE.Vector3(0, 1, 0), 0);
-  else draw.plane.set(new THREE.Vector3(0, 0, 1), 0);
-
-  // Look straight at the drawing surface.
-  orbit.target.set(kind === 'spin' ? 2 : orbit.target.x, kind === 'spin' ? 3 : 0, kind === 'spin' ? 0 : orbit.target.z);
-  camera.position.copy(orbit.target).add(kind === 'spin' ? new THREE.Vector3(0, 0, 16) : new THREE.Vector3(0, 18, 0.0001));
-  camera.lookAt(orbit.target);
+  if (kind === 'spin') {
+    // Look straight at the side profile.
+    orbit.target.set(2, 3, 0);
+    camera.position.set(2, 3, 16);
+    camera.lookAt(orbit.target);
+  }
   orbit.enableRotate = false;
   transform.enabled = false;
-
   spinAxis.visible = kind === 'spin';
   mirrorLine.visible = kind === 'spin';
   draw.preview.visible = true;
   updateDrawPreview();
   document.body.classList.add('drawing');
   document.body.classList.remove('show-inspector');
-  $('drawTitle').textContent = kind === 'spin' ? 'Spin shape' : 'Draw shape';
-  $('drawHelp').textContent = DRAW_HELP[kind];
+  $('drawTitle').textContent = DRAW_INFO[kind][0];
+  $('drawHelp').textContent = DRAW_INFO[kind][1];
+  const pointTool = kind === 'line' || kind === 'spin';
+  $('drawUndo').hidden = !pointTool;
+  $('drawFinish').hidden = !pointTool;
   $('drawbar').hidden = false;
   document.querySelectorAll('[data-action^="draw-start"]').forEach((b) => {
     b.classList.toggle('active', b.dataset.action === `draw-start-${kind}`);
@@ -1320,10 +1601,11 @@ function endDraw(restoreView) {
   draw.preview.visible = false;
   orbit.enableRotate = true;
   transform.enabled = true;
+  $('dimLabel').hidden = true;
   document.body.classList.remove('drawing');
   $('drawbar').hidden = true;
   document.querySelectorAll('[data-action^="draw-start"]').forEach((b) => b.classList.remove('active'));
-  if (restoreView && draw.savedView) {
+  if (restoreView && draw.savedView && draw.kind === 'spin') {
     camera.position.copy(draw.savedView.pos);
     orbit.target.copy(draw.savedView.target);
   }
@@ -1333,37 +1615,78 @@ function cancelDraw() {
   endDraw(true);
 }
 
-function drawPoint(e, snap) {
+// Pick the sketch plane from what is under the pointer: a face of a part, or the ground.
+function choosePlane(e) {
   setPointer(e);
-  const hit = raycaster.ray.intersectPlane(draw.plane, new THREE.Vector3());
+  const hit = raycaster.intersectObjects(objects.filter((o) => o.visible), false)[0];
+  if (hit) {
+    const n = hit.face.normal.clone().applyNormalMatrix(new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld)).normalize();
+    draw.plane = makePlane(n.clone().multiplyScalar(n.dot(hit.point)), n);
+    draw.hostId = hit.object.userData.id;
+    $('drawHelp').textContent = `Drawing on "${hit.object.name}".`;
+  } else {
+    if (!raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), new THREE.Vector3())) return false;
+    draw.plane = makePlane(new THREE.Vector3(), new THREE.Vector3(0, 1, 0));
+    draw.hostId = null;
+  }
+  return true;
+}
+
+function pointerUV(e, snap) {
+  setPointer(e);
+  const q = rayToUV(draw.plane);
+  return q && snap ? snapUV(q) : q;
+}
+
+function spinPoint(e, snap) {
+  setPointer(e);
+  const hit = raycaster.ray.intersectPlane(draw.spinPlane, new THREE.Vector3());
   if (!hit) return null;
   if (snap && snapOn) {
     hit.x = Math.round(hit.x / SNAP.move) * SNAP.move;
     hit.y = Math.round(hit.y / SNAP.move) * SNAP.move;
-    hit.z = Math.round(hit.z / SNAP.move) * SNAP.move;
   }
-  if (draw.kind === 'outline') hit.y = 0;
-  else hit.z = 0;
+  hit.z = 0;
   return hit;
 }
 
 function drawPointerDown(e) {
   if (e.button !== 0 || activePointers.size > 1) {
     // A second finger means pan / zoom: undo whatever this stroke added.
-    if (draw.stroke) draw.points.length = draw.stroke.startCount;
+    if (draw.stroke) {
+      draw.points.length = draw.stroke.startCount;
+      if (draw.anchorJustSet) draw.anchor = null;
+    }
     draw.stroke = null;
     updateDrawPreview();
     return;
+  }
+  if (draw.kind !== 'spin' && !draw.plane && !choosePlane(e)) return;
+  draw.anchorJustSet = false;
+  if ((draw.kind === 'rect' || draw.kind === 'circle') && !draw.anchor) {
+    draw.anchor = pointerUV(e, true);
+    draw.anchorJustSet = !!draw.anchor;
   }
   draw.stroke = { x: e.clientX, y: e.clientY, moved: false, startCount: draw.points.length };
 }
 
 function drawPointerMove(e) {
   const st = draw.stroke;
-  if (!st) return;
-  if (!st.moved && Math.hypot(e.clientX - st.x, e.clientY - st.y) < 6) return;
-  st.moved = true;
-  const p = drawPoint(e, false);
+  if (st && !st.moved && Math.hypot(e.clientX - st.x, e.clientY - st.y) >= 6) st.moved = true;
+  if (draw.kind === 'spin') {
+    if (st && st.moved) addFreehand(spinPoint(e, false));
+    return;
+  }
+  if (!draw.plane) return;
+  if (draw.kind === 'line' && st && st.moved) {
+    addFreehand(pointerUV(e, false));
+    return;
+  }
+  draw.cursor = pointerUV(e, true);
+  updateDrawPreview(e);
+}
+
+function addFreehand(p) {
   if (!p) return;
   const last = draw.points[draw.points.length - 1];
   if (!last || last.distanceTo(p) > 0.25) {
@@ -1376,42 +1699,123 @@ function drawPointerUp(e) {
   const st = draw.stroke;
   draw.stroke = null;
   if (!st) return;
-  if (st.moved) {
-    // Freehand stroke: drawing back onto the start closes the outline.
-    const pts = draw.points;
-    if (draw.kind === 'outline' && pts.length > 8 && pts[0].distanceTo(pts[pts.length - 1]) < 0.6) finishDraw();
+  const kind = draw.kind;
+
+  if (kind === 'rect' || kind === 'circle') {
+    if (!draw.anchor) return;
+    if (!st.moved && draw.anchorJustSet) return; // first tap: wait for the second
+    const end = pointerUV(e, true);
+    if (end) finishShapeSketch(end);
     return;
   }
-  const p = drawPoint(e, true);
-  if (!p) return;
+
   const pts = draw.points;
-  const closeDist = camera.position.distanceTo(orbit.target) * 0.025;
-  if (draw.kind === 'outline' && pts.length >= 3 && p.distanceTo(pts[0]) < Math.max(0.3, closeDist)) {
+  if (st.moved) {
+    // Freehand stroke: drawing back onto the start closes the outline.
+    if (kind === 'line' && pts.length > 8 && pts[0].distanceTo(pts[pts.length - 1]) < 0.6) finishDraw();
+    return;
+  }
+  const p = kind === 'spin' ? spinPoint(e, true) : pointerUV(e, true);
+  if (!p) return;
+  const closeDist = Math.max(0.3, camera.position.distanceTo(orbit.target) * 0.025);
+  if (kind === 'line' && pts.length >= 3 && p.distanceTo(pts[0]) < closeDist) {
     finishDraw();
     return;
   }
   const last = pts[pts.length - 1];
   if (last && last.distanceTo(p) < 0.01) return;
   pts.push(p);
-  updateDrawPreview();
+  updateDrawPreview(e);
 }
 
-function updateDrawPreview() {
-  const pts = draw.points;
-  const linePts = draw.kind === 'outline' && pts.length > 2 ? [...pts, pts[0]] : pts;
+function shapeFromAnchor(end) {
+  const a = draw.anchor;
+  if (draw.kind === 'rect') return { kind: 'rect', rect: { x: a.x, y: a.y, w: end.x - a.x, h: end.y - a.y } };
+  return { kind: 'circle', circle: { cx: a.x, cy: a.y, r: a.distanceTo(end) } };
+}
+
+function finishShapeSketch(end) {
+  const d = shapeFromAnchor(end);
+  const tiny = d.kind === 'rect' ? Math.abs(d.rect.w) < 0.05 || Math.abs(d.rect.h) < 0.05 : d.circle.r < 0.05;
+  if (tiny) {
+    draw.anchor = null;
+    updateDrawPreview();
+    toast('Too small. Drag a bit further.');
+    return;
+  }
+  createSketch(d);
+}
+
+function createSketch(d) {
+  const data = { ...d, plane: planeToData(draw.plane), hostId: draw.hostId };
+  endDraw(false);
+  const g = addSketch(data);
+  selectSketch(g);
+  commit();
+  toast(data.hostId
+    ? 'Drag the arrow: pull out to add, push in to cut.'
+    : 'Drag the arrow up to turn it into a solid.');
+}
+
+function showDim(e, text) {
+  const el = $('dimLabel');
+  if (!e || !text) {
+    el.hidden = true;
+    return;
+  }
+  const r = viewport.getBoundingClientRect();
+  el.textContent = text;
+  el.style.left = `${e.clientX - r.left + 16}px`;
+  el.style.top = `${e.clientY - r.top + 16}px`;
+  el.hidden = false;
+}
+
+function updateDrawPreview(e) {
+  const kind = draw.kind;
+  let world = [];
+  let closed = false;
+  let dim = '';
+  if (kind === 'spin') {
+    world = draw.points;
+  } else if (draw.plane) {
+    const P = draw.plane;
+    const toW = (q) => fromUV(P, q.x, q.y, 0.01);
+    if ((kind === 'rect' || kind === 'circle') && draw.anchor) {
+      const end = draw.cursor || draw.anchor;
+      const d = shapeFromAnchor(end);
+      world = sketchShape(d).getPoints(48).map(toW);
+      closed = true;
+      dim = kind === 'rect'
+        ? `${fmt(Math.abs(d.rect.w))} × ${fmt(Math.abs(d.rect.h))}`
+        : `⌀ ${fmt(d.circle.r * 2)}`;
+      if (kind === 'circle') world.push(toW(draw.anchor), toW(end)); // radius line
+    } else if (kind === 'line') {
+      const pts = [...draw.points];
+      if (draw.cursor && pts.length && !draw.stroke) {
+        pts.push(draw.cursor);
+        dim = fmt(draw.cursor.distanceTo(draw.points[draw.points.length - 1]));
+      }
+      world = pts.map(toW);
+      closed = draw.points.length > 2;
+    }
+  }
+  const linePts = closed && world.length > 2 ? [...world, world[0]] : world;
   previewLine.geometry.dispose();
   previewLine.geometry = new THREE.BufferGeometry().setFromPoints(linePts.length ? linePts : [new THREE.Vector3()]);
+  const dots = kind === 'spin' ? draw.points
+    : draw.plane ? (kind === 'line' ? draw.points : draw.anchor ? [draw.anchor] : []).map((q) => fromUV(draw.plane, q.x, q.y, 0.01)) : [];
   previewDots.geometry.dispose();
-  previewDots.geometry = new THREE.BufferGeometry().setFromPoints(pts.length ? pts : []);
+  previewDots.geometry = new THREE.BufferGeometry().setFromPoints(dots);
   mirrorLine.geometry.dispose();
   mirrorLine.geometry = new THREE.BufferGeometry().setFromPoints(
-    pts.length ? pts.map((p) => new THREE.Vector3(-p.x, p.y, p.z)) : [new THREE.Vector3()],
+    kind === 'spin' && draw.points.length ? draw.points.map((p) => new THREE.Vector3(-p.x, p.y, p.z)) : [new THREE.Vector3()],
   );
   mirrorLine.computeLineDistances();
-  const need = draw.kind === 'outline' ? 3 : 2;
-  $('drawFinish').disabled = pts.length < need;
-  $('drawUndo').disabled = pts.length === 0;
-  $('drawCount').textContent = pts.length ? `${pts.length} point${pts.length === 1 ? '' : 's'}` : '';
+  const need = kind === 'line' ? 3 : 2;
+  $('drawFinish').disabled = draw.points.length < need;
+  $('drawUndo').disabled = draw.points.length === 0;
+  $('drawCount').textContent = draw.points.length ? `${draw.points.length} point${draw.points.length === 1 ? '' : 's'}` : '';
+  showDim(e, dim);
 }
 
 function undoDrawPoint() {
@@ -1421,34 +1825,31 @@ function undoDrawPoint() {
 
 function finishDraw() {
   const pts = draw.points;
+  if (draw.kind === 'line') {
+    if (pts.length < 3) return;
+    createSketch({ kind: 'poly', points: pts.map((q) => [round(q.x), round(q.y)]) });
+    return;
+  }
+  if (draw.kind !== 'spin' || pts.length < 2) return;
   let geometry;
   try {
-    if (draw.kind === 'outline') {
-      if (pts.length < 3) return;
-      // Shape lives in the XY plane; after rotateX(-90°) shape-y becomes -z.
-      const shape = new THREE.Shape(pts.map((p) => new THREE.Vector2(p.x, -p.z)));
-      geometry = new THREE.ExtrudeGeometry(shape, { depth: 2, bevelEnabled: false }).rotateX(-Math.PI / 2);
-    } else {
-      if (pts.length < 2) return;
-      const profile = pts.map((p) => new THREE.Vector2(Math.abs(p.x), p.y));
-      // Close the solid at the axis, bottom and top.
-      if (profile[0].x > 0.001) profile.unshift(new THREE.Vector2(0, profile[0].y));
-      if (profile[profile.length - 1].x > 0.001) profile.push(new THREE.Vector2(0, profile[profile.length - 1].y));
-      geometry = new THREE.LatheGeometry(profile, 64);
-    }
+    const profile = pts.map((p) => new THREE.Vector2(Math.abs(p.x), p.y));
+    // Close the solid at the axis, bottom and top.
+    if (profile[0].x > 0.001) profile.unshift(new THREE.Vector2(0, profile[0].y));
+    if (profile[profile.length - 1].x > 0.001) profile.push(new THREE.Vector2(0, profile[profile.length - 1].y));
+    geometry = new THREE.LatheGeometry(profile, 64);
   } catch (err) {
     console.error(err);
   }
   if (!geometry || !geometry.attributes.position || geometry.attributes.position.count === 0) {
-    toast('Could not make a shape from that drawing. Try an outline that does not cross itself.');
+    toast('Could not make a shape from that drawing.');
     return;
   }
-  const kind = draw.kind;
   endDraw(false);
-  const mesh = addGeometryObject(geometry, kind === 'spin' ? 'Spun shape' : 'Drawn shape');
+  const mesh = addGeometryObject(geometry, 'Spun shape');
   setView('persp');
   frame([mesh]);
-  toast(kind === 'spin' ? 'Done! Resize or recolor it on the right.' : 'Done! Change its height with Size Y.');
+  toast('Done! Resize or recolor it on the right.');
 }
 
 // Dragging the gizmo: when moving, the other selected objects follow the primary one.
@@ -1519,7 +1920,7 @@ function openProject(file) {
 }
 
 function newProject() {
-  if (objects.length && !confirm('Start a new design? (You can still undo this.)')) return;
+  if ((objects.length || sketches.length) && !confirm('Start a new design? (You can still undo this.)')) return;
   clearAll();
   setSelection([]);
   commit();
@@ -1642,6 +2043,16 @@ for (const color of PALETTE) {
 
 $('pColor').addEventListener('input', (e) => setColor(e.target.value, false));
 $('pColor').addEventListener('change', (e) => setColor(e.target.value, true));
+for (const id of ['skW', 'skH', 'skD']) {
+  $(id).addEventListener('change', resizeSketch);
+  $(id).addEventListener('keydown', (e) => e.key === 'Enter' && e.target.blur());
+}
+$('skExtrude').addEventListener('change', (e) => {
+  const v = parseFloat(e.target.value);
+  e.target.value = '';
+  if (selectedSketch && Number.isFinite(v)) extrudeSketch(selectedSketch, v);
+});
+$('skExtrude').addEventListener('keydown', (e) => e.key === 'Enter' && e.target.blur());
 $('pullDist').addEventListener('change', (e) => {
   pullByTyping(parseFloat(e.target.value));
   e.target.value = '0';
@@ -1745,7 +2156,7 @@ function refreshUI() {
   });
   $('undoBtn').disabled = history.index <= 0;
   $('redoBtn').disabled = history.index >= history.stack.length - 1;
-  $('hint').classList.toggle('gone', objects.length > 0);
+  $('hint').classList.toggle('gone', objects.length > 0 || sketches.length > 0);
 }
 
 let toastTimer;
@@ -1788,7 +2199,10 @@ const actions = {
   floor: dropToFloor,
   align: alignSelection,
   text: addText,
-  'draw-start-outline': () => startDraw('outline'),
+  'draw-start-rect': () => startDraw('rect'),
+  'draw-start-circle': () => startDraw('circle'),
+  'draw-start-line': () => startDraw('line'),
+  'sketch-delete': deleteSelectedSketch,
   'draw-start-spin': () => startDraw('spin'),
   'draw-undo': undoDrawPoint,
   'draw-cancel': cancelDraw,
@@ -1847,6 +2261,8 @@ window.addEventListener('keydown', (e) => {
   else if (mod) handled = false;
   else if (k === 'w') setMode('translate');
   else if (k === 'q') setMode('pull');
+  else if (k === 'escape' && selectedSketch) deselectSketch();
+  else if ((k === 'delete' || k === 'backspace') && selectedSketch) deleteSelectedSketch();
   else if (k === 'escape' && pull.face) clearPullFace();
   else if (k === 'e') setMode('rotate');
   else if (k === 'r') setMode('scale');
@@ -1873,7 +2289,7 @@ try {
 colorIndex = objects.length;
 setSelection([]);
 commit();
-if (objects.length) frame();
+if (objects.length || sketches.length) frame();
 
 // Handy for debugging from the console.
-window.shaper = { scene, camera, objects, serialize, addShape, combineSelection, setSelection, draw, pull, pullArrow };
+window.shaper = { scene, camera, objects, serialize, addShape, combineSelection, setSelection, draw, pull, pullArrow, sketches, signedVolume };
