@@ -5,7 +5,17 @@ import { STLExporter } from 'three/addons/exporters/STLExporter.js';
 import { OBJExporter } from 'three/addons/exporters/OBJExporter.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+import fontData from 'three/examples/fonts/helvetiker_bold.typeface.json';
 import { Brush, Evaluator, ADDITION, SUBTRACTION } from 'three-bvh-csg';
+
+const FONT = new FontLoader().parse(fontData);
+
+// A flat 2D outline extruded 1 unit and laid flat on the ground (extrudes upward).
+function flatShape(shape, curveSegments = 32) {
+  return new THREE.ExtrudeGeometry(shape, { depth: 1, bevelEnabled: false, curveSegments }).rotateX(-Math.PI / 2);
+}
 
 /* ------------------------------------------------------------------ *
  * Shapes. Every primitive is normalised to fit a 1×1×1 box, so an
@@ -47,9 +57,68 @@ const SHAPES = {
       return mergeGeometries([top, bottom]);
     },
   },
+  tube: {
+    label: 'Tube',
+    size: [2, 2, 2],
+    make: () => {
+      const s = new THREE.Shape().absarc(0, 0, 0.5, 0, Math.PI * 2, false);
+      s.holes.push(new THREE.Path().absarc(0, 0, 0.36, 0, Math.PI * 2, true));
+      return flatShape(s, 48);
+    },
+  },
+  hexagon: {
+    label: 'Hexagon',
+    size: [1.732, 2, 2],
+    make: () => new THREE.CylinderGeometry(0.5, 0.5, 1, 6),
+  },
+  capsule: {
+    label: 'Capsule',
+    size: [1.5, 3, 1.5],
+    make: () => new THREE.CapsuleGeometry(0.5, 1, 12, 32),
+  },
+  star: {
+    label: 'Star',
+    size: [2, 0.5, 2],
+    make: () => {
+      const s = new THREE.Shape();
+      for (let i = 0; i < 10; i++) {
+        const r = i % 2 ? 0.2 : 0.5;
+        const a = (i / 10) * Math.PI * 2 + Math.PI / 2;
+        if (i === 0) s.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+        else s.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+      }
+      s.closePath();
+      return flatShape(s);
+    },
+  },
+  heart: {
+    label: 'Heart',
+    size: [2, 0.5, 2],
+    make: () => {
+      const s = new THREE.Shape();
+      s.moveTo(0, -0.5);
+      s.bezierCurveTo(0.1, -0.35, 0.5, -0.1, 0.5, 0.15);
+      s.bezierCurveTo(0.5, 0.45, 0.15, 0.5, 0, 0.3);
+      s.bezierCurveTo(-0.15, 0.5, -0.5, 0.45, -0.5, 0.15);
+      s.bezierCurveTo(-0.5, -0.1, -0.1, -0.35, 0, -0.5);
+      return flatShape(s);
+    },
+  },
 };
 // Shapes that look the same after a left/right mirror (when not rotated).
-const X_SYMMETRIC = new Set(['box', 'sphere', 'cylinder', 'cone', 'pyramid', 'torus', 'dome']);
+const X_SYMMETRIC = new Set([
+  'box', 'sphere', 'cylinder', 'cone', 'pyramid', 'torus', 'dome', 'tube', 'hexagon', 'capsule', 'star', 'heart',
+]);
+
+function textGeometry(text) {
+  const g = new TextGeometry(text, { font: FONT, size: 1, depth: 0.4, curveSegments: 8, bevelEnabled: false });
+  g.clearGroups();
+  g.computeBoundingBox();
+  const c = g.boundingBox.getCenter(new THREE.Vector3());
+  g.translate(-c.x, -c.y, -c.z);
+  g.computeBoundingBox();
+  return g;
+}
 
 const PALETTE = ['#e8604c', '#f2a541', '#f4d35e', '#5fbf77', '#3fa7d6', '#6c63ff', '#c069c9', '#f0f0f0', '#8a8f98', '#2b2d33'];
 const SNAP = { move: 0.5, rotate: THREE.MathUtils.degToRad(15), scale: 0.25 };
@@ -188,7 +257,11 @@ function makeMaterial(color, hole) {
 
 function createMesh(desc) {
   const custom = desc.type === 'custom';
-  const geometry = custom ? geometryFromData(desc.geometry) : primitiveGeometry(desc.type);
+  const geometry = custom
+    ? geometryFromData(desc.geometry)
+    : desc.type === 'text'
+      ? textGeometry(desc.text || 'Text')
+      : primitiveGeometry(desc.type);
   const mesh = new THREE.Mesh(geometry, makeMaterial(desc.color, desc.hole));
   mesh.name = desc.name;
   mesh.position.fromArray(desc.position);
@@ -203,10 +276,13 @@ function createMesh(desc) {
     color: desc.color,
     hole: !!desc.hole,
     geomData: custom ? desc.geometry : null,
+    text: desc.type === 'text' ? desc.text || 'Text' : undefined,
     base: geometry.boundingBox.getSize(new THREE.Vector3()),
   };
   return mesh;
 }
+
+const ownsGeometry = (mesh) => mesh.userData.type === 'custom' || mesh.userData.type === 'text';
 
 function addObject(mesh) {
   objects.push(mesh);
@@ -218,7 +294,7 @@ function removeObject(mesh) {
   world.remove(mesh);
   objects.splice(objects.indexOf(mesh), 1);
   mesh.material.dispose();
-  if (mesh.userData.type === 'custom') mesh.geometry.dispose();
+  if (ownsGeometry(mesh)) mesh.geometry.dispose();
 }
 
 function clearAll() {
@@ -239,6 +315,7 @@ function describe(mesh) {
     rotation: [mesh.rotation.x, mesh.rotation.y, mesh.rotation.z].map((v) => round(v, 1e6)),
     scale: mesh.scale.toArray().map((v) => round(v)),
     ...(d.type === 'custom' ? { geometry: d.geomData } : {}),
+    ...(d.type === 'text' ? { text: d.text } : {}),
   };
 }
 
@@ -249,7 +326,7 @@ function serialize() {
 function load(data) {
   clearAll();
   for (const desc of data.objects) {
-    if (desc.type !== 'custom' && !SHAPES[desc.type]) continue;
+    if (desc.type !== 'custom' && desc.type !== 'text' && !SHAPES[desc.type]) continue;
     addObject(createMesh(desc));
   }
 }
@@ -363,15 +440,28 @@ function setMode(mode) {
   document.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
 }
 
+// Where a new object of the given height goes: on top of the selected object
+// (so models can be built up), otherwise on the ground where the camera looks.
+function placement(height) {
+  const p = primary();
+  if (p && p.visible) {
+    const box = new THREE.Box3().setFromObject(p);
+    const c = box.getCenter(new THREE.Vector3());
+    toast(`Placed on top of "${p.name}". Press Esc first to place it on the ground.`);
+    return [round(c.x), round(box.max.y + height / 2), round(c.z)];
+  }
+  const t = orbit.target;
+  return [Math.round(t.x), height / 2, Math.round(t.z)];
+}
+
 function addShape(type) {
   const shape = SHAPES[type];
-  const t = orbit.target;
   const mesh = createMesh({
     type,
     name: uniqueName(shape.label),
     color: PALETTE[colorIndex++ % 7],
     hole: false,
-    position: [Math.round(t.x), shape.size[1] / 2, Math.round(t.z)],
+    position: placement(shape.size[1]),
     rotation: [0, 0, 0],
     scale: shape.size,
   });
@@ -379,6 +469,108 @@ function addShape(type) {
   setSelection([mesh]);
   setMode('translate');
   commit();
+}
+
+function addText() {
+  const mesh = createMesh({
+    type: 'text',
+    text: 'Hello',
+    name: uniqueName('Text'),
+    color: PALETTE[colorIndex++ % 7],
+    hole: false,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [1, 1, 1],
+  });
+  mesh.position.fromArray(placement(mesh.userData.base.y));
+  addObject(mesh);
+  setSelection([mesh]);
+  setMode('translate');
+  commit();
+  document.body.classList.add('show-inspector');
+  const input = $('pText');
+  input.focus();
+  input.select();
+}
+
+function setText(mesh, text) {
+  text = text.trim();
+  if (!text || mesh.userData.type !== 'text' || text === mesh.userData.text) return;
+  mesh.geometry.dispose();
+  mesh.geometry = textGeometry(text);
+  mesh.userData.text = text;
+  mesh.userData.base = mesh.geometry.boundingBox.getSize(new THREE.Vector3());
+  if (mesh.name.startsWith('Text')) mesh.name = uniqueName(`"${text.slice(0, 16)}"`);
+  commit();
+}
+
+// Line up the centres of the selected objects (left/right and front/back) with the
+// last-selected one. Handy for putting a hole right in the middle of a shape.
+function alignSelection() {
+  const p = primary();
+  if (!p || selection.length < 2) return;
+  const target = new THREE.Box3().setFromObject(p).getCenter(new THREE.Vector3());
+  for (const m of selection) {
+    if (m === p) continue;
+    const c = new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3());
+    m.position.x += target.x - c.x;
+    m.position.z += target.z - c.z;
+  }
+  refreshPanel();
+  commit();
+  toast(`Centred on "${p.name}".`);
+}
+
+// Signed volume; negative means the triangles face inward.
+function signedVolume(g) {
+  const pos = g.attributes.position;
+  const idx = g.index;
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  let vol = 0;
+  const count = idx ? idx.count : pos.count;
+  for (let i = 0; i < count; i += 3) {
+    a.fromBufferAttribute(pos, idx ? idx.getX(i) : i);
+    b.fromBufferAttribute(pos, idx ? idx.getX(i + 1) : i + 1);
+    c.fromBufferAttribute(pos, idx ? idx.getX(i + 2) : i + 2);
+    vol += a.dot(b.cross(c)) / 6;
+  }
+  return vol;
+}
+
+// Turn a freshly built geometry (in world coordinates) into a new object.
+function addGeometryObject(geometry, label) {
+  geometry.clearGroups();
+  for (const key of Object.keys(geometry.attributes)) {
+    if (key !== 'position' && key !== 'normal') geometry.deleteAttribute(key);
+  }
+  if (signedVolume(geometry) < 0) {
+    flipWinding(geometry);
+    const n = geometry.attributes.normal;
+    for (let i = 0; i < n.array.length; i++) n.array[i] = -n.array[i];
+  }
+  geometry.computeBoundingBox();
+  const box = geometry.boundingBox.clone(); // translate() below recomputes the original
+  const center = box.getCenter(new THREE.Vector3());
+  geometry.translate(-center.x, -center.y, -center.z);
+  if (box.min.y < 0) center.y -= box.min.y; // keep it above the ground
+  const mesh = createMesh({
+    type: 'custom',
+    name: uniqueName(label),
+    color: PALETTE[colorIndex++ % 7],
+    hole: false,
+    position: center.toArray().map((v) => round(v)),
+    rotation: [0, 0, 0],
+    scale: [1, 1, 1],
+    geometry: geometryToData(geometry),
+  });
+  geometry.dispose();
+  addObject(mesh);
+  setSelection([mesh]);
+  setMode('translate');
+  commit();
+  return mesh;
 }
 
 function duplicateSelection() {
@@ -615,19 +807,45 @@ const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 let down = null;
 
+function setPointer(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+  raycaster.setFromCamera(pointer, camera);
+}
+
+const activePointers = new Set();
+
 renderer.domElement.addEventListener('pointerdown', (e) => {
+  activePointers.add(e.pointerId);
+  if (draw.active) {
+    drawPointerDown(e);
+    return;
+  }
   down = { x: e.clientX, y: e.clientY, onGizmo: transform.axis !== null };
 });
 
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (draw.active) drawPointerMove(e);
+});
+
+renderer.domElement.addEventListener('pointercancel', (e) => {
+  activePointers.delete(e.pointerId);
+  draw.stroke = null;
+  down = null;
+});
+
 renderer.domElement.addEventListener('pointerup', (e) => {
+  activePointers.delete(e.pointerId);
+  if (draw.active) {
+    drawPointerUp(e);
+    return;
+  }
   if (!down) return;
   const d = down;
   down = null;
   if (d.onGizmo || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) return;
 
-  const rect = renderer.domElement.getBoundingClientRect();
-  pointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
-  raycaster.setFromCamera(pointer, camera);
+  setPointer(e);
   const hit = raycaster.intersectObjects(objects.filter((o) => o.visible), false)[0];
   const additive = e.shiftKey || e.ctrlKey || e.metaKey || multiMode;
 
@@ -642,6 +860,218 @@ renderer.domElement.addEventListener('pointerup', (e) => {
     setSelection([obj]);
   }
 });
+
+/* ------------------------------------------------------------------ *
+ * Draw tool
+ *  - "outline": tap points / drag on the ground (top view) -> extruded solid
+ *  - "spin":    draw half a side profile (front view) -> spun around the axis
+ * ------------------------------------------------------------------ */
+const draw = {
+  active: false,
+  kind: null,
+  points: [], // THREE.Vector3 on the drawing plane
+  stroke: null,
+  plane: new THREE.Plane(),
+  preview: new THREE.Group(),
+  savedView: null,
+};
+scene.add(draw.preview);
+
+const previewLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffd166 }));
+const mirrorLine = new THREE.Line(
+  new THREE.BufferGeometry(),
+  new THREE.LineDashedMaterial({ color: 0xffd166, dashSize: 0.2, gapSize: 0.15, transparent: true, opacity: 0.5 }),
+);
+const previewDots = new THREE.Points(
+  new THREE.BufferGeometry(),
+  new THREE.PointsMaterial({ color: 0xffffff, size: 9, sizeAttenuation: false }),
+);
+const spinAxis = new THREE.Line(
+  new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, 30, 0)]),
+  new THREE.LineDashedMaterial({ color: 0x6bdc7c, dashSize: 0.3, gapSize: 0.2 }),
+);
+spinAxis.computeLineDistances();
+for (const o of [previewLine, mirrorLine, previewDots, spinAxis]) {
+  o.renderOrder = 10;
+  o.material.depthTest = false;
+  o.frustumCulled = false;
+}
+draw.preview.add(previewLine, mirrorLine, previewDots, spinAxis);
+draw.preview.visible = false;
+
+const DRAW_HELP = {
+  outline: 'Tap to place corners, or drag to draw freely. Tap the first point or press Finish to close the shape.',
+  spin: 'Draw the right half of the side outline. It spins around the green line to make round objects like cups and vases.',
+};
+
+function startDraw(kind) {
+  if (draw.active) cancelDraw();
+  setSelection([]);
+  draw.active = true;
+  draw.kind = kind;
+  draw.points = [];
+  draw.stroke = null;
+  draw.savedView = { pos: camera.position.clone(), target: orbit.target.clone() };
+  if (kind === 'outline') draw.plane.set(new THREE.Vector3(0, 1, 0), 0);
+  else draw.plane.set(new THREE.Vector3(0, 0, 1), 0);
+
+  // Look straight at the drawing surface.
+  orbit.target.set(kind === 'spin' ? 2 : orbit.target.x, kind === 'spin' ? 3 : 0, kind === 'spin' ? 0 : orbit.target.z);
+  camera.position.copy(orbit.target).add(kind === 'spin' ? new THREE.Vector3(0, 0, 16) : new THREE.Vector3(0, 18, 0.0001));
+  camera.lookAt(orbit.target);
+  orbit.enableRotate = false;
+  transform.enabled = false;
+
+  spinAxis.visible = kind === 'spin';
+  mirrorLine.visible = kind === 'spin';
+  draw.preview.visible = true;
+  updateDrawPreview();
+  document.body.classList.add('drawing');
+  document.body.classList.remove('show-inspector');
+  $('drawTitle').textContent = kind === 'spin' ? 'Spin shape' : 'Draw shape';
+  $('drawHelp').textContent = DRAW_HELP[kind];
+  $('drawbar').hidden = false;
+  document.querySelectorAll('[data-action^="draw-start"]').forEach((b) => {
+    b.classList.toggle('active', b.dataset.action === `draw-start-${kind}`);
+  });
+}
+
+function endDraw(restoreView) {
+  draw.active = false;
+  draw.stroke = null;
+  draw.preview.visible = false;
+  orbit.enableRotate = true;
+  transform.enabled = true;
+  document.body.classList.remove('drawing');
+  $('drawbar').hidden = true;
+  document.querySelectorAll('[data-action^="draw-start"]').forEach((b) => b.classList.remove('active'));
+  if (restoreView && draw.savedView) {
+    camera.position.copy(draw.savedView.pos);
+    orbit.target.copy(draw.savedView.target);
+  }
+}
+
+function cancelDraw() {
+  endDraw(true);
+}
+
+function drawPoint(e, snap) {
+  setPointer(e);
+  const hit = raycaster.ray.intersectPlane(draw.plane, new THREE.Vector3());
+  if (!hit) return null;
+  if (snap && snapOn) {
+    hit.x = Math.round(hit.x / SNAP.move) * SNAP.move;
+    hit.y = Math.round(hit.y / SNAP.move) * SNAP.move;
+    hit.z = Math.round(hit.z / SNAP.move) * SNAP.move;
+  }
+  if (draw.kind === 'outline') hit.y = 0;
+  else hit.z = 0;
+  return hit;
+}
+
+function drawPointerDown(e) {
+  if (e.button !== 0 || activePointers.size > 1) {
+    // A second finger means pan / zoom: undo whatever this stroke added.
+    if (draw.stroke) draw.points.length = draw.stroke.startCount;
+    draw.stroke = null;
+    updateDrawPreview();
+    return;
+  }
+  draw.stroke = { x: e.clientX, y: e.clientY, moved: false, startCount: draw.points.length };
+}
+
+function drawPointerMove(e) {
+  const st = draw.stroke;
+  if (!st) return;
+  if (!st.moved && Math.hypot(e.clientX - st.x, e.clientY - st.y) < 6) return;
+  st.moved = true;
+  const p = drawPoint(e, false);
+  if (!p) return;
+  const last = draw.points[draw.points.length - 1];
+  if (!last || last.distanceTo(p) > 0.25) {
+    draw.points.push(p);
+    updateDrawPreview();
+  }
+}
+
+function drawPointerUp(e) {
+  const st = draw.stroke;
+  draw.stroke = null;
+  if (!st) return;
+  if (st.moved) {
+    // Freehand stroke: drawing back onto the start closes the outline.
+    const pts = draw.points;
+    if (draw.kind === 'outline' && pts.length > 8 && pts[0].distanceTo(pts[pts.length - 1]) < 0.6) finishDraw();
+    return;
+  }
+  const p = drawPoint(e, true);
+  if (!p) return;
+  const pts = draw.points;
+  const closeDist = camera.position.distanceTo(orbit.target) * 0.025;
+  if (draw.kind === 'outline' && pts.length >= 3 && p.distanceTo(pts[0]) < Math.max(0.3, closeDist)) {
+    finishDraw();
+    return;
+  }
+  const last = pts[pts.length - 1];
+  if (last && last.distanceTo(p) < 0.01) return;
+  pts.push(p);
+  updateDrawPreview();
+}
+
+function updateDrawPreview() {
+  const pts = draw.points;
+  const linePts = draw.kind === 'outline' && pts.length > 2 ? [...pts, pts[0]] : pts;
+  previewLine.geometry.dispose();
+  previewLine.geometry = new THREE.BufferGeometry().setFromPoints(linePts.length ? linePts : [new THREE.Vector3()]);
+  previewDots.geometry.dispose();
+  previewDots.geometry = new THREE.BufferGeometry().setFromPoints(pts.length ? pts : []);
+  mirrorLine.geometry.dispose();
+  mirrorLine.geometry = new THREE.BufferGeometry().setFromPoints(
+    pts.length ? pts.map((p) => new THREE.Vector3(-p.x, p.y, p.z)) : [new THREE.Vector3()],
+  );
+  mirrorLine.computeLineDistances();
+  const need = draw.kind === 'outline' ? 3 : 2;
+  $('drawFinish').disabled = pts.length < need;
+  $('drawUndo').disabled = pts.length === 0;
+  $('drawCount').textContent = pts.length ? `${pts.length} point${pts.length === 1 ? '' : 's'}` : '';
+}
+
+function undoDrawPoint() {
+  draw.points.pop();
+  updateDrawPreview();
+}
+
+function finishDraw() {
+  const pts = draw.points;
+  let geometry;
+  try {
+    if (draw.kind === 'outline') {
+      if (pts.length < 3) return;
+      // Shape lives in the XY plane; after rotateX(-90°) shape-y becomes -z.
+      const shape = new THREE.Shape(pts.map((p) => new THREE.Vector2(p.x, -p.z)));
+      geometry = new THREE.ExtrudeGeometry(shape, { depth: 2, bevelEnabled: false }).rotateX(-Math.PI / 2);
+    } else {
+      if (pts.length < 2) return;
+      const profile = pts.map((p) => new THREE.Vector2(Math.abs(p.x), p.y));
+      // Close the solid at the axis, bottom and top.
+      if (profile[0].x > 0.001) profile.unshift(new THREE.Vector2(0, profile[0].y));
+      if (profile[profile.length - 1].x > 0.001) profile.push(new THREE.Vector2(0, profile[profile.length - 1].y));
+      geometry = new THREE.LatheGeometry(profile, 64);
+    }
+  } catch (err) {
+    console.error(err);
+  }
+  if (!geometry || !geometry.attributes.position || geometry.attributes.position.count === 0) {
+    toast('Could not make a shape from that drawing. Try an outline that does not cross itself.');
+    return;
+  }
+  const kind = draw.kind;
+  endDraw(false);
+  const mesh = addGeometryObject(geometry, kind === 'spin' ? 'Spun shape' : 'Drawn shape');
+  setView('persp');
+  frame([mesh]);
+  toast(kind === 'spin' ? 'Done! Resize or recolor it on the right.' : 'Done! Change its height with Size Y.');
+}
 
 // Dragging the gizmo: when moving, the other selected objects follow the primary one.
 let dragStart = null;
@@ -833,6 +1263,12 @@ for (const color of PALETTE) {
 
 $('pColor').addEventListener('input', (e) => setColor(e.target.value, false));
 $('pColor').addEventListener('change', (e) => setColor(e.target.value, true));
+$('pText').addEventListener('change', (e) => {
+  const p = primary();
+  if (p) setText(p, e.target.value);
+  refreshUI();
+});
+$('pText').addEventListener('keydown', (e) => e.key === 'Enter' && e.target.blur());
 $('pName').addEventListener('change', (e) => {
   const p = primary();
   if (!p) return;
@@ -857,6 +1293,9 @@ function refreshPanel() {
   note.textContent = `${selection.length} objects selected — numbers below are for "${p.name}". Color and Solid/Hole apply to all.`;
 
   set($('pName'), p.name);
+  const isText = p.userData.type === 'text';
+  $('textField').hidden = !isText;
+  if (isText) set($('pText'), p.userData.text);
   set($('pColor'), p.userData.color);
   $('pColor').disabled = selection.every((m) => m.userData.hole);
   const allHoles = selection.every((m) => m.userData.hole);
@@ -963,6 +1402,13 @@ const actions = {
   combine: combineSelection,
   mirror: mirrorSelection,
   floor: dropToFloor,
+  align: alignSelection,
+  text: addText,
+  'draw-start-outline': () => startDraw('outline'),
+  'draw-start-spin': () => startDraw('spin'),
+  'draw-undo': undoDrawPoint,
+  'draw-cancel': cancelDraw,
+  'draw-finish': finishDraw,
   help: () => ($('help').hidden = false),
   'help-close': () => ($('help').hidden = true),
   'toggle-inspector': () => document.body.classList.toggle('show-inspector'),
@@ -971,6 +1417,9 @@ const actions = {
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('button');
   if (!btn || btn.disabled) return;
+  // Any other editing button ends an unfinished drawing.
+  const keepsDrawing = btn.closest('#drawbar') || btn.dataset.view || /^(draw-|snap|help|toggle)/.test(btn.dataset.action || '');
+  if (draw.active && !keepsDrawing) cancelDraw();
   if (btn.dataset.action && actions[btn.dataset.action]) {
     actions[btn.dataset.action]();
     btn.closest('details')?.removeAttribute('open');
@@ -998,6 +1447,14 @@ window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   const mod = e.ctrlKey || e.metaKey;
   let handled = true;
+  if (draw.active) {
+    if (k === 'escape') cancelDraw();
+    else if (k === 'enter') finishDraw();
+    else if (k === 'backspace' || k === 'delete' || (mod && k === 'z')) undoDrawPoint();
+    else handled = false;
+    if (handled) e.preventDefault();
+    return;
+  }
   if (mod && k === 'z') (e.shiftKey ? redo : undo)();
   else if (mod && k === 'y') redo();
   else if (mod && k === 'd') duplicateSelection();
@@ -1032,4 +1489,4 @@ commit();
 if (objects.length) frame();
 
 // Handy for debugging from the console.
-window.shaper = { scene, objects, serialize, addShape, combineSelection, setSelection };
+window.shaper = { scene, camera, objects, serialize, addShape, combineSelection, setSelection, draw };

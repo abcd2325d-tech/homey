@@ -79,6 +79,38 @@
               <svg viewBox="0 0 24 24"><path d="M3.5 16a8.5 8.5 0 0 1 17 0" /><ellipse cx="12" cy="16" rx="8.5" ry="2.5" /></svg>
               <span>Dome</span>
             </button>
+            <button data-shape="tube" title="Tube (hollow cylinder)">
+              <svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="2.5" /><ellipse cx="12" cy="6" rx="3.5" ry="1.2" /><path d="M5 6v12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V6" /></svg>
+              <span>Tube</span>
+            </button>
+            <button data-shape="hexagon" title="Hexagon prism">
+              <svg viewBox="0 0 24 24"><path d="M7 4h10l3 3-3 3H7L4 7z M4 7v10l3 3h10l3-3V7 M7 10v10 M17 10v10" /></svg>
+              <span>Hexagon</span>
+            </button>
+            <button data-shape="capsule" title="Capsule">
+              <svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="5" /><path d="M7 9.5c0 1.2 2.2 2 5 2s5-.8 5-2" /></svg>
+              <span>Capsule</span>
+            </button>
+            <button data-shape="star" title="Star">
+              <svg viewBox="0 0 24 24"><path d="m12 3 2.6 5.6 6.1.7-4.5 4.1 1.2 6L12 16.4 6.6 19.4l1.2-6-4.5-4.1 6.1-.7z" /></svg>
+              <span>Star</span>
+            </button>
+            <button data-shape="heart" title="Heart">
+              <svg viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-7.5-10A4.2 4.2 0 0 1 12 7.4 4.2 4.2 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z" /></svg>
+              <span>Heart</span>
+            </button>
+            <button data-action="text" title="3D text">
+              <svg viewBox="0 0 24 24"><path d="M5 5h14 M12 5v15 M9 20h6" /></svg>
+              <span>Text</span>
+            </button>
+          </div>
+        </section>
+
+        <section>
+          <h3>Draw your own</h3>
+          <div class="btn-col">
+            <button data-action="draw-start-outline" title="Draw any outline on the ground; it becomes a solid">✎ Draw shape</button>
+            <button data-action="draw-start-spin" title="Draw half an outline; it spins into a round object (cup, vase, bottle)">◍ Spin shape</button>
           </div>
         </section>
 
@@ -99,6 +131,7 @@
             <button data-action="duplicate" data-needs="1" title="Duplicate (Ctrl+D)">⧉ Duplicate</button>
             <button data-action="hole" data-needs="1" title="Switch between solid and hole (H)">◌ Solid / Hole <kbd>H</kbd></button>
             <button data-action="combine" data-needs="2" title="Merge selected shapes; holes are cut out (G)">⊕ Combine <kbd>G</kbd></button>
+            <button data-action="align" data-needs="2" title="Line up the centres of the selected objects with the last one you picked">⊹ Align centers</button>
             <button data-action="mirror" data-needs="1" title="Mirror left/right">⇋ Mirror</button>
             <button data-action="floor" data-needs="1" title="Drop selection onto the ground">⤓ Drop to floor</button>
             <button data-action="delete" data-needs="1" class="danger" title="Delete (Del)">✕ Delete</button>
@@ -111,6 +144,17 @@
           <strong>Start by adding a shape</strong>
           Drag to orbit · right-drag or two fingers to pan · scroll or pinch to zoom
         </div>
+        <div class="drawbar" id="drawbar" hidden>
+          <div class="drawbar-text">
+            <strong id="drawTitle">Draw shape</strong> <span id="drawCount"></span>
+            <p id="drawHelp"></p>
+          </div>
+          <div class="drawbar-buttons">
+            <button id="drawUndo" data-action="draw-undo">↶ Point</button>
+            <button data-action="draw-cancel">Cancel</button>
+            <button id="drawFinish" data-action="draw-finish" class="primary">✓ Finish</button>
+          </div>
+        </div>
         <div class="toast" id="toast" role="status"></div>
       </main>
 
@@ -120,6 +164,7 @@
           <p class="empty" id="propsEmpty">Nothing selected. Click an object, or add a shape.</p>
           <div id="propsBody" hidden>
             <p class="multi-note" id="multiNote" hidden></p>
+            <label class="field" id="textField" hidden><span>Text</span><input id="pText" type="text" maxlength="60" /></label>
             <label class="field"><span>Name</span><input id="pName" type="text" maxlength="40" /></label>
 
             <div class="field">
@@ -167,9 +212,12 @@
       <div class="modal-card">
         <h2>How to design</h2>
         <ol>
-          <li><b>Add shapes</b> from the left panel. They appear where the camera is looking.</li>
+          <li><b>Add shapes</b> from the left panel. If something is selected, the new shape is stacked on top of it.</li>
+          <li><b>Draw shape:</b> tap corners (or drag freely) on the ground to draw any outline, then press Finish. It becomes a solid you can make taller with Size&nbsp;Y.</li>
+          <li><b>Spin shape:</b> draw the right half of a side outline (like half a cup). It spins into a round object.</li>
+          <li><b>Text:</b> adds 3D letters. Change the words in Properties.</li>
           <li><b>Move, rotate, resize</b> with the arrows on the selected shape, or type exact numbers in Properties.</li>
-          <li><b>Make holes:</b> set a shape to <i>Hole</i>, place it inside another shape, select both and press <b>Combine</b> to cut it out.</li>
+          <li><b>Make holes:</b> set a shape to <i>Hole</i>, place it inside another shape, select both and press <b>Combine</b> to cut it out. <b>Align centers</b> puts the hole exactly in the middle.</li>
           <li><b>Combine</b> also glues solid shapes together into one object.</li>
           <li><b>Export STL</b> to 3D print (1 grid square = 10&nbsp;mm), or GLB/OBJ for other apps.</li>
         </ol>
@@ -179,7 +227,7 @@
           <span><kbd>Shift</kbd>+click Multi-select</span><span><kbd>Ctrl</kbd>+<kbd>D</kbd> Duplicate</span>
           <span><kbd>H</kbd> Solid/Hole</span><span><kbd>G</kbd> Combine</span><span><kbd>Del</kbd> Delete</span>
           <span><kbd>F</kbd> Zoom to selection</span><span><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Y</kbd> Undo / Redo</span>
-          <span><kbd>Esc</kbd> Deselect</span><span><kbd>Ctrl</kbd>+<kbd>S</kbd> Save</span>
+          <span><kbd>Esc</kbd> Deselect / stop drawing</span><span><kbd>Enter</kbd> Finish drawing</span><span><kbd>Ctrl</kbd>+<kbd>S</kbd> Save</span>
         </div>
         <p class="note">Your design is auto-saved in this browser.</p>
         <button data-action="help-close" class="primary">Got it</button>

@@ -581,3 +581,52 @@ input[type='color'] {
     transform: none;
   }
 }
+
+/* ---------- drawing bar ---------- */
+.drawbar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, calc(100% - 24px));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  background: rgba(31, 34, 41, 0.95);
+  border: 1px solid #ffd166;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  z-index: 3;
+}
+.drawbar[hidden] {
+  display: none;
+}
+.drawbar-text {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.drawbar-text strong {
+  color: #ffd166;
+}
+.drawbar-text span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.drawbar-text p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.drawbar-buttons {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+body.drawing .hint {
+  opacity: 0;
+}
+body.drawing .viewport canvas {
+  cursor: crosshair;
+}
