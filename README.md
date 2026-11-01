@@ -8,6 +8,10 @@ stay, and manage listings as a host. Includes a bottom tab bar for phone-sized s
   password hashing, input validation (zod), rate limiting, Helmet security headers.
 - **Frontend:** React + Vite, React Router, plain CSS (no framework needed).
 
+> **Also in this repo:** [`designer/`](designer/) — *Shaper 3D*, a simple standalone browser
+> app for designing 3D models (shapes, holes, combine, export to STL/OBJ/GLB). See
+> [designer/README.md](designer/README.md).
+
 ## Project structure
 
 ```
