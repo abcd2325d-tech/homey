@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <title>Shaper 3D</title>
-    <script type="module" crossorigin src="./assets/index-Cjp3hTh0.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-B8WCNvcY.css">
+    <script type="module" crossorigin src="./assets/index-c70XYT0X.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-CZ_7-MHH.css">
   </head>
   <body>
     <header class="topbar">
@@ -108,9 +108,11 @@
         </section>
 
         <section>
-          <h3>Draw your own</h3>
+          <h3>Sketch</h3>
           <div class="btn-col">
-            <button data-action="draw-start-outline" title="Draw any outline on the ground; it becomes a solid">✎ Draw shape</button>
+            <button data-action="draw-start-rect" title="Draw a rectangle on the ground or on any face">▭ Rectangle</button>
+            <button data-action="draw-start-circle" title="Draw a circle on the ground or on any face">◯ Circle</button>
+            <button data-action="draw-start-line" title="Draw any outline with straight lines or freehand">✎ Line</button>
             <button data-action="draw-start-spin" title="Draw half an outline; it spins into a round object (cup, vase, bottle)">◍ Spin shape</button>
           </div>
         </section>
@@ -157,6 +159,19 @@
             <button id="drawFinish" data-action="draw-finish" class="primary">✓ Finish</button>
           </div>
         </div>
+        <div class="drawbar sketchbar" id="sketchbar" hidden>
+          <div class="drawbar-text">
+            <strong>Sketch</strong> <span id="sketchKind"></span>
+            <p>Drag the arrow: pull out to add material, push in to cut a pocket or hole.</p>
+          </div>
+          <div class="drawbar-buttons sketch-fields">
+            <span id="sketchRect" class="pull-num"><label>W <input id="skW" type="number" step="0.25" min="0.05" /></label><label>H <input id="skH" type="number" step="0.25" min="0.05" /></label></span>
+            <span id="sketchCircle" class="pull-num"><label>⌀ <input id="skD" type="number" step="0.25" min="0.05" /></label></span>
+            <label class="pull-num" title="Type a distance: positive pulls out, negative cuts in">Extrude <input id="skExtrude" type="number" step="0.5" placeholder="0" /></label>
+            <button data-action="sketch-delete" class="danger" title="Delete sketch">✕</button>
+          </div>
+        </div>
+        <div class="dim-label" id="dimLabel" hidden></div>
         <div class="drawbar pullbar" id="pullbar" hidden>
           <div class="drawbar-text">
             <strong>Push / Pull</strong>
@@ -225,7 +240,7 @@
         <h2>How to design</h2>
         <ol>
           <li><b>Add shapes</b> from the left panel. If something is selected, the new shape is stacked on top of it.</li>
-          <li><b>Draw shape:</b> tap corners (or drag freely) on the ground to draw any outline, then press Finish. It becomes a solid you can make taller with Size&nbsp;Y.</li>
+          <li><b>Sketch, then pull</b> (like Shapr3D): pick Rectangle, Circle or Line and draw on the ground <i>or on any face of a part</i>. Live measurements show as you draw. Then drag the sketch's arrow: pull out to add material, push in to cut a pocket or hole. You can type exact sizes too.</li>
           <li><b>Spin shape:</b> draw the right half of a side outline (like half a cup). It spins into a round object.</li>
           <li><b>Text:</b> adds 3D letters. Change the words in Properties.</li>
           <li><b>Move, rotate, resize</b> with the arrows on the selected shape, or type exact numbers in Properties.</li>
