@@ -121,7 +121,31 @@ function textGeometry(text) {
 }
 
 const PALETTE = ['#e8604c', '#f2a541', '#f4d35e', '#5fbf77', '#3fa7d6', '#6c63ff', '#c069c9', '#f0f0f0', '#8a8f98', '#2b2d33'];
-const SNAP = { move: 0.5, rotate: THREE.MathUtils.degToRad(15), scale: 0.25 };
+const SNAP = { rotate: THREE.MathUtils.degToRad(15) };
+
+// Measurement units. Internally 1 unit = 1 cm; these only change what you see and type.
+// cell = grid square, move = snap step for moving, fine = snap step for sketches/sizes (all in cm).
+const UNITS = {
+  mm: { label: 'mm', factor: 10, cell: 1, move: 0.5, fine: 0.1, digits: 1 },
+  cm: { label: 'cm', factor: 1, cell: 1, move: 0.5, fine: 0.25, digits: 2 },
+  m: { label: 'm', factor: 0.01, cell: 10, move: 5, fine: 1, digits: 3 },
+  in: { label: 'in', factor: 1 / 2.54, cell: 2.54, move: 1.27, fine: 0.635, digits: 3 },
+};
+const UNIT_KEY = 'shaper3d.units';
+let unitKey = 'cm';
+try {
+  const saved = localStorage.getItem(UNIT_KEY);
+  if (UNITS[saved]) unitKey = saved;
+} catch {
+  /* storage blocked: use cm */
+}
+const unit = () => UNITS[unitKey];
+const fmtLen = (v) => {
+  const p = 10 ** unit().digits;
+  return String(Math.round(v * unit().factor * p) / p);
+};
+const withUnit = (v) => `${fmtLen(v)} ${unit().label}`;
+const fromDisp = (v) => v / unit().factor;
 const MIN_SIZE = 0.05;
 const STORAGE_KEY = 'shaper3d.autosave.v1';
 const MM_PER_UNIT = 10;
@@ -154,14 +178,23 @@ const fill = new THREE.DirectionalLight(0xbfd4ff, 0.6);
 fill.position.set(-12, 6, -10);
 scene.add(fill);
 
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.ShadowMaterial({ opacity: 0.28 }));
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000), new THREE.ShadowMaterial({ opacity: 0.28 }));
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
-const grid = new THREE.GridHelper(40, 40, 0x4a515e, 0x30353f);
-grid.position.y = 0.002;
-scene.add(grid);
+let grid = null;
+function buildGrid() {
+  if (grid) {
+    scene.remove(grid);
+    grid.geometry.dispose();
+    grid.material.dispose();
+  }
+  grid = new THREE.GridHelper(40 * unit().cell, 40, 0x4a515e, 0x30353f);
+  grid.position.y = 0.002;
+  scene.add(grid);
+  axes.scale.set(unit().cell, 1, unit().cell);
+}
 const axes = new THREE.LineSegments(
   new THREE.BufferGeometry().setFromPoints([
     new THREE.Vector3(-20, 0.004, 0), new THREE.Vector3(20, 0.004, 0),
@@ -172,6 +205,7 @@ const axes = new THREE.LineSegments(
 axes.geometry.setAttribute('color', new THREE.Float32BufferAttribute(
   [0.85, 0.3, 0.3, 0.85, 0.3, 0.3, 0.3, 0.5, 0.9, 0.3, 0.5, 0.9], 3));
 scene.add(axes);
+buildGrid();
 
 const world = new THREE.Group();
 scene.add(world);
@@ -198,7 +232,20 @@ function resize() {
 new ResizeObserver(resize).observe(viewport);
 resize();
 
+// Smooth camera moves (used when drawing turns to face a surface).
+let camAnim = null;
+function animateCamera(pos, target, ms = 450) {
+  camAnim = { fromPos: camera.position.clone(), fromTarget: orbit.target.clone(), pos, target, t0: performance.now(), ms };
+}
+
 renderer.setAnimationLoop(() => {
+  if (camAnim) {
+    const k = Math.min(1, (performance.now() - camAnim.t0) / camAnim.ms);
+    const ease = 1 - (1 - k) ** 3;
+    camera.position.lerpVectors(camAnim.fromPos, camAnim.pos, ease);
+    orbit.target.lerpVectors(camAnim.fromTarget, camAnim.target, ease);
+    if (k === 1) camAnim = null;
+  }
   orbit.update();
   if (pullArrow.visible) {
     // Keep the arrow the same size on screen.
@@ -326,11 +373,14 @@ function describe(mesh) {
 }
 
 function serialize() {
-  return { app: 'shaper3d', version: 1, objects: objects.map(describe), sketches: sketches.map(sketchData) };
+  return {
+    app: 'shaper3d', version: 1, units: unitKey, objects: objects.map(describe), sketches: sketches.map(sketchData),
+  };
 }
 
 function load(data) {
   clearAll();
+  if (UNITS[data.units] && data.units !== unitKey) setUnits(data.units, false);
   for (const desc of data.objects) {
     if (desc.type !== 'custom' && desc.type !== 'text' && !SHAPES[desc.type]) continue;
     addObject(createMesh(desc));
@@ -440,10 +490,35 @@ function redo() {
  * ------------------------------------------------------------------ */
 let snapOn = true;
 
+// Switch measurement units: grid, snapping and every displayed number follow.
+function setUnits(key, save = true) {
+  if (!UNITS[key]) return;
+  unitKey = key;
+  try {
+    localStorage.setItem(UNIT_KEY, key);
+  } catch {
+    /* ignore */
+  }
+  buildGrid();
+  applySnap();
+  const u = unit();
+  const step = (v) => String(Math.round(v * u.factor * 1e4) / 1e4);
+  document.querySelectorAll('.unit-tag').forEach((el) => (el.textContent = `(${u.label})`));
+  document.querySelectorAll('.xyz[data-prop=size] input, .xyz[data-prop=position] input').forEach((el) => (el.step = step(u.move)));
+  for (const id of ['skW', 'skH', 'skD', 'skExtrude', 'pullDist']) $(id).step = step(u.fine);
+  $('unitSelect').value = key;
+  refreshPanel();
+  if (selectedSketch) selectSketch(selectedSketch);
+  if (save) {
+    commit();
+    toast(`Units: ${{ mm: 'millimetres', cm: 'centimetres', m: 'metres', in: 'inches' }[key]}`);
+  }
+}
+
 function applySnap() {
-  transform.setTranslationSnap(snapOn ? SNAP.move : null);
+  transform.setTranslationSnap(snapOn ? unit().move : null);
   transform.setRotationSnap(snapOn ? SNAP.rotate : null);
-  transform.setScaleSnap(snapOn ? SNAP.scale : null);
+  transform.setScaleSnap(snapOn ? unit().fine : null);
 }
 applySnap();
 
@@ -488,9 +563,9 @@ function addShape(type) {
     name: uniqueName(shape.label),
     color: PALETTE[colorIndex++ % 7],
     hole: false,
-    position: placement(shape.size[1]),
+    position: placement(shape.size[1] * unit().cell),
     rotation: [0, 0, 0],
-    scale: shape.size,
+    scale: shape.size.map((v) => v * unit().cell),
   });
   addObject(mesh);
   setSelection([mesh]);
@@ -507,9 +582,9 @@ function addText() {
     hole: false,
     position: [0, 0, 0],
     rotation: [0, 0, 0],
-    scale: [1, 1, 1],
+    scale: [unit().cell, unit().cell, unit().cell],
   });
-  mesh.position.fromArray(placement(mesh.userData.base.y));
+  mesh.position.fromArray(placement(mesh.userData.base.y * unit().cell));
   addObject(mesh);
   setSelection([mesh]);
   setMode('translate');
@@ -1057,12 +1132,7 @@ function clearPullFace() {
 // World-space start point and direction of the arrow for the current face.
 function pullAxis() {
   const { mesh, face } = pull;
-  if (face.kind === 'sketch') {
-    const d = face.sketch.userData;
-    const plane = planeFromData(d.plane);
-    const c = sketchCenter(d);
-    return { origin: fromUV(plane, c.x, c.y), dir: plane.n.clone() };
-  }
+  if (face.kind === 'sketch') return pullAxisFor(face.sketch);
   mesh.updateMatrixWorld();
   if (face.kind === 'plane') {
     const origin = face.centroid.clone().applyQuaternion(mesh.quaternion).add(mesh.position);
@@ -1077,6 +1147,13 @@ function pullAxis() {
     origin: mesh.localToWorld(local),
     dir: dirLocal.applyQuaternion(mesh.quaternion).normalize(),
   };
+}
+
+function pullAxisFor(sketch) {
+  const d = sketch.userData;
+  const plane = planeFromData(d.plane);
+  const c = sketchCenter(d);
+  return { origin: fromUV(plane, c.x, c.y), dir: plane.n.clone() };
 }
 
 function placePullArrow() {
@@ -1135,7 +1212,7 @@ function beginPull() {
 
 function applyPull(dist) {
   const { mesh, face, drag } = pull;
-  if (snapOn) dist = Math.round(dist / 0.25) * 0.25;
+  if (snapOn) dist = Math.round(dist / unit().fine) * unit().fine;
   if (face.kind === 'sketch') {
     previewSketchSolid(face.sketch.userData, dist);
   } else if (face.kind === 'plane') {
@@ -1171,7 +1248,7 @@ function applyPull(dist) {
   }
   drag.dist = dist;
   pullArrow.position.copy(drag.axis.origin).addScaledVector(drag.axis.dir, dist);
-  $('pullDist').value = fmt(dist);
+  $('pullDist').value = fmtLen(dist);
   refreshPanel();
 }
 
@@ -1204,8 +1281,8 @@ function endPull() {
   if (Math.abs(drag.dist) > 1e-6) {
     commit();
     toast(drag.limited
-      ? `Pushed ${fmt(Math.abs(drag.dist))} units. It stops before the next wall or hole.`
-      : `${drag.dist > 0 ? 'Pulled' : 'Pushed'} ${fmt(Math.abs(drag.dist))} units.`);
+      ? `Pushed ${withUnit(Math.abs(drag.dist))}. It stops before the next wall or hole.`
+      : `${drag.dist > 0 ? 'Pulled' : 'Pushed'} ${withUnit(Math.abs(drag.dist))}.`);
   }
   if (pull.face) placePullArrow();
   else clearPullFace();
@@ -1276,7 +1353,6 @@ function pullByTyping(value) {
  *    to cut a pocket or hole into the part it was drawn on.
  *  - Spin: draw half a side profile (front view) -> round solid.
  * ------------------------------------------------------------------ */
-const SKETCH_SNAP = 0.25;
 
 // A sketch plane: origin o, normal n and in-plane axes u, v (u × v = n).
 function makePlane(o, n) {
@@ -1301,7 +1377,11 @@ function rayToUV(p) {
   hit.sub(p.o);
   return new THREE.Vector2(hit.dot(p.u), hit.dot(p.v));
 }
-const snapUV = (q) => (snapOn ? new THREE.Vector2(Math.round(q.x / SKETCH_SNAP) * SKETCH_SNAP, Math.round(q.y / SKETCH_SNAP) * SKETCH_SNAP) : q);
+const snapUV = (q) => {
+  if (!snapOn) return q;
+  const f = unit().fine;
+  return new THREE.Vector2(Math.round(q.x / f) * f, Math.round(q.y / f) * f);
+};
 
 function sketchShape(d) {
   if (d.kind === 'rect') {
@@ -1376,10 +1456,10 @@ function selectSketch(g) {
   $('sketchRect').hidden = d.kind !== 'rect';
   $('sketchCircle').hidden = d.kind !== 'circle';
   if (d.kind === 'rect') {
-    $('skW').value = fmt(Math.abs(d.rect.w));
-    $('skH').value = fmt(Math.abs(d.rect.h));
+    $('skW').value = fmtLen(Math.abs(d.rect.w));
+    $('skH').value = fmtLen(Math.abs(d.rect.h));
   } else if (d.kind === 'circle') {
-    $('skD').value = fmt(d.circle.r * 2);
+    $('skD').value = fmtLen(d.circle.r * 2);
   }
   $('skExtrude').value = '';
   $('sketchbar').hidden = false;
@@ -1399,13 +1479,13 @@ function resizeSketch() {
   if (!g) return;
   const d = sketchData(g);
   if (d.kind === 'rect') {
-    const w = parseFloat($('skW').value);
-    const h = parseFloat($('skH').value);
+    const w = fromDisp(parseFloat($('skW').value));
+    const h = fromDisp(parseFloat($('skH').value));
     if (!(w > 0) || !(h > 0)) return selectSketch(g);
     d.rect.w = Math.sign(d.rect.w || 1) * w;
     d.rect.h = Math.sign(d.rect.h || 1) * h;
   } else if (d.kind === 'circle') {
-    const dia = parseFloat($('skD').value);
+    const dia = fromDisp(parseFloat($('skD').value));
     if (!(dia > 0)) return selectSketch(g);
     d.circle.r = dia / 2;
   }
@@ -1495,7 +1575,7 @@ function extrudeSketch(g, dist) {
   if (!host) {
     removeSketch(g);
     addGeometryObject(sketchSolid(d, dist, 0), 'Body');
-    toast(`Pulled up ${fmt(dist)} units.`);
+    toast(`Pulled up ${withUnit(dist)}.`);
     return;
   }
   let result;
@@ -1512,7 +1592,7 @@ function extrudeSketch(g, dist) {
   const next = replaceGeometry(host, result);
   setSelection([next]);
   commit();
-  toast(dist > 0 ? `Added ${fmt(dist)} units to "${next.name}".` : `Cut ${fmt(-dist)} units into "${next.name}".`);
+  toast(dist > 0 ? `Added ${withUnit(dist)} to "${next.name}".` : `Cut ${withUnit(-dist)} into "${next.name}".`);
 }
 
 /* ---------- drawing sketches ---------- */
@@ -1551,13 +1631,21 @@ for (const o of [previewLine, mirrorLine, previewDots, spinAxis]) {
   o.material.depthTest = false;
   o.frustumCulled = false;
 }
-draw.preview.add(previewLine, mirrorLine, previewDots, spinAxis);
+const cursorDot = new THREE.Points(
+  new THREE.BufferGeometry().setFromPoints([new THREE.Vector3()]),
+  new THREE.PointsMaterial({ color: 0xffd166, size: 13, sizeAttenuation: false, depthTest: false }),
+);
+cursorDot.renderOrder = 11;
+cursorDot.frustumCulled = false;
+let sketchGrid = null;
+draw.preview.add(previewLine, mirrorLine, previewDots, spinAxis, cursorDot);
 draw.preview.visible = false;
 
+const PICK_SURFACE = 'Step 1: tap where you want to draw: the ground, or any face of a part.';
 const DRAW_INFO = {
-  rect: ['Rectangle', 'Drag from corner to corner (or tap two corners) on the ground or on any face of a part.'],
-  circle: ['Circle', 'Drag from the centre outward (or tap the centre, then the edge) on the ground or on any face.'],
-  line: ['Line', 'Tap to place corners, or drag to draw freely, on the ground or any face. Tap the first point or Finish to close it.'],
+  rect: ['Rectangle', 'Step 2: drag from corner to corner, or tap two corners.'],
+  circle: ['Circle', 'Step 2: drag from the centre outward, or tap the centre, then the edge.'],
+  line: ['Line', 'Step 2: tap to place corners, or drag to draw freely. Tap the first point or Finish to close it.'],
   spin: ['Spin shape', 'Draw the right half of the side outline. It spins around the green line to make round objects like cups and vases.'],
 };
 
@@ -1572,9 +1660,8 @@ function startDraw(kind) {
   draw.savedView = { pos: camera.position.clone(), target: orbit.target.clone() };
   if (kind === 'spin') {
     // Look straight at the side profile.
-    orbit.target.set(2, 3, 0);
-    camera.position.set(2, 3, 16);
-    camera.lookAt(orbit.target);
+    const c = unit().cell;
+    animateCamera(new THREE.Vector3(2 * c, 3 * c, 16 * c), new THREE.Vector3(2 * c, 3 * c, 0));
   }
   orbit.enableRotate = false;
   transform.enabled = false;
@@ -1585,7 +1672,8 @@ function startDraw(kind) {
   document.body.classList.add('drawing');
   document.body.classList.remove('show-inspector');
   $('drawTitle').textContent = DRAW_INFO[kind][0];
-  $('drawHelp').textContent = DRAW_INFO[kind][1];
+  $('drawHelp').textContent = kind === 'spin' ? DRAW_INFO[kind][1] : PICK_SURFACE;
+  $('drawSurface').hidden = true;
   const pointTool = kind === 'line' || kind === 'spin';
   $('drawUndo').hidden = !pointTool;
   $('drawFinish').hidden = !pointTool;
@@ -1605,10 +1693,55 @@ function endDraw(restoreView) {
   document.body.classList.remove('drawing');
   $('drawbar').hidden = true;
   document.querySelectorAll('[data-action^="draw-start"]').forEach((b) => b.classList.remove('active'));
-  if (restoreView && draw.savedView && draw.kind === 'spin') {
-    camera.position.copy(draw.savedView.pos);
-    orbit.target.copy(draw.savedView.target);
-  }
+  removeSketchGrid();
+  if (restoreView && draw.savedView) animateCamera(draw.savedView.pos, draw.savedView.target);
+}
+
+// A grid lying on the chosen surface, centred where you tapped.
+function showSketchGrid(focus) {
+  removeSketchGrid();
+  const P = draw.plane;
+  const c = unit().cell;
+  const g = new THREE.GridHelper(24 * c, 24, 0xffd166, 0xffd166);
+  g.material.transparent = true;
+  g.material.opacity = 0.35;
+  g.material.depthWrite = false;
+  const q = rayToUVPoint(P, focus);
+  const center = fromUV(P, Math.round(q.x / c) * c, Math.round(q.y / c) * c, 0.006 * c);
+  g.matrixAutoUpdate = false;
+  g.matrix.makeBasis(P.u, P.n, P.u.clone().cross(P.n)).setPosition(center);
+  g.renderOrder = 4;
+  sketchGrid = g;
+  scene.add(g);
+}
+function removeSketchGrid() {
+  if (!sketchGrid) return;
+  scene.remove(sketchGrid);
+  sketchGrid.geometry.dispose();
+  sketchGrid.material.dispose();
+  sketchGrid = null;
+}
+const rayToUVPoint = (P, point) => {
+  const d = point.clone().sub(P.o);
+  return new THREE.Vector2(d.dot(P.u), d.dot(P.v));
+};
+
+// Turn the camera to look straight at the drawing surface.
+function faceSurface(focus) {
+  const n = draw.plane.n;
+  const dist = THREE.MathUtils.clamp(camera.position.distanceTo(orbit.target), 8 * unit().cell, 40 * unit().cell);
+  const dir = n.clone();
+  if (Math.abs(n.y) > 0.99) dir.z += 0.001; // avoid a straight-down lookAt flip
+  animateCamera(focus.clone().addScaledVector(dir.normalize(), dist), focus.clone());
+}
+
+// Pick a new surface without leaving the tool.
+function changeSurface() {
+  Object.assign(draw, { plane: null, hostId: null, points: [], anchor: null, cursor: null, stroke: null });
+  removeSketchGrid();
+  $('drawHelp').textContent = PICK_SURFACE;
+  $('drawSurface').hidden = true;
+  updateDrawPreview();
 }
 
 function cancelDraw() {
@@ -1623,12 +1756,19 @@ function choosePlane(e) {
     const n = hit.face.normal.clone().applyNormalMatrix(new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld)).normalize();
     draw.plane = makePlane(n.clone().multiplyScalar(n.dot(hit.point)), n);
     draw.hostId = hit.object.userData.id;
-    $('drawHelp').textContent = `Drawing on "${hit.object.name}".`;
+    draw.focus = hit.point.clone();
+    $('drawHelp').textContent = `Drawing on "${hit.object.name}". ${DRAW_INFO[draw.kind][1]}`;
   } else {
-    if (!raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), new THREE.Vector3())) return false;
+    const g = raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), new THREE.Vector3());
+    if (!g) return false;
     draw.plane = makePlane(new THREE.Vector3(), new THREE.Vector3(0, 1, 0));
     draw.hostId = null;
+    draw.focus = g;
+    $('drawHelp').textContent = `Drawing on the ground. ${DRAW_INFO[draw.kind][1]}`;
   }
+  $('drawSurface').hidden = false;
+  showSketchGrid(draw.focus);
+  faceSurface(draw.focus);
   return true;
 }
 
@@ -1643,8 +1783,9 @@ function spinPoint(e, snap) {
   const hit = raycaster.ray.intersectPlane(draw.spinPlane, new THREE.Vector3());
   if (!hit) return null;
   if (snap && snapOn) {
-    hit.x = Math.round(hit.x / SNAP.move) * SNAP.move;
-    hit.y = Math.round(hit.y / SNAP.move) * SNAP.move;
+    const f = unit().fine;
+    hit.x = Math.round(hit.x / f) * f;
+    hit.y = Math.round(hit.y / f) * f;
   }
   hit.z = 0;
   return hit;
@@ -1661,7 +1802,12 @@ function drawPointerDown(e) {
     updateDrawPreview();
     return;
   }
-  if (draw.kind !== 'spin' && !draw.plane && !choosePlane(e)) return;
+  if (draw.kind !== 'spin' && !draw.plane) {
+    // First tap only chooses the surface; drawing starts once the camera faces it.
+    choosePlane(e);
+    draw.stroke = null;
+    return;
+  }
   draw.anchorJustSet = false;
   if ((draw.kind === 'rect' || draw.kind === 'circle') && !draw.anchor) {
     draw.anchor = pointerUV(e, true);
@@ -1689,7 +1835,7 @@ function drawPointerMove(e) {
 function addFreehand(p) {
   if (!p) return;
   const last = draw.points[draw.points.length - 1];
-  if (!last || last.distanceTo(p) > 0.25) {
+  if (!last || last.distanceTo(p) > unit().cell * 0.25) {
     draw.points.push(p);
     updateDrawPreview();
   }
@@ -1748,8 +1894,14 @@ function finishShapeSketch(end) {
 
 function createSketch(d) {
   const data = { ...d, plane: planeToData(draw.plane), hostId: draw.hostId };
+  const saved = draw.savedView;
   endDraw(false);
   const g = addSketch(data);
+  // Tilt back to an angled view so the sketch's arrow is easy to grab.
+  const target = pullAxisFor(g).origin;
+  let dir = saved ? saved.pos.clone().sub(saved.target).normalize() : new THREE.Vector3(...VIEWS.persp).normalize();
+  if (Math.abs(dir.dot(planeFromData(data.plane).n)) > 0.85) dir = new THREE.Vector3(...VIEWS.persp).normalize();
+  animateCamera(target.clone().addScaledVector(dir, camera.position.distanceTo(orbit.target)), target);
   selectSketch(g);
   commit();
   toast(data.hostId
@@ -1786,14 +1938,14 @@ function updateDrawPreview(e) {
       world = sketchShape(d).getPoints(48).map(toW);
       closed = true;
       dim = kind === 'rect'
-        ? `${fmt(Math.abs(d.rect.w))} × ${fmt(Math.abs(d.rect.h))}`
-        : `⌀ ${fmt(d.circle.r * 2)}`;
+        ? `${fmtLen(Math.abs(d.rect.w))} × ${fmtLen(Math.abs(d.rect.h))} ${unit().label}`
+        : `⌀ ${withUnit(d.circle.r * 2)}`;
       if (kind === 'circle') world.push(toW(draw.anchor), toW(end)); // radius line
     } else if (kind === 'line') {
       const pts = [...draw.points];
       if (draw.cursor && pts.length && !draw.stroke) {
         pts.push(draw.cursor);
-        dim = fmt(draw.cursor.distanceTo(draw.points[draw.points.length - 1]));
+        dim = withUnit(draw.cursor.distanceTo(draw.points[draw.points.length - 1]));
       }
       world = pts.map(toW);
       closed = draw.points.length > 2;
@@ -1806,6 +1958,12 @@ function updateDrawPreview(e) {
     : draw.plane ? (kind === 'line' ? draw.points : draw.anchor ? [draw.anchor] : []).map((q) => fromUV(draw.plane, q.x, q.y, 0.01)) : [];
   previewDots.geometry.dispose();
   previewDots.geometry = new THREE.BufferGeometry().setFromPoints(dots);
+  const cursorWorld = kind !== 'spin' && draw.plane && draw.cursor ? fromUV(draw.plane, draw.cursor.x, draw.cursor.y, 0.01) : null;
+  cursorDot.visible = !!cursorWorld;
+  if (cursorWorld) {
+    cursorDot.geometry.attributes.position.setXYZ(0, cursorWorld.x, cursorWorld.y, cursorWorld.z);
+    cursorDot.geometry.attributes.position.needsUpdate = true;
+  }
   mirrorLine.geometry.dispose();
   mirrorLine.geometry = new THREE.BufferGeometry().setFromPoints(
     kind === 'spin' && draw.points.length ? draw.points.map((p) => new THREE.Vector3(-p.x, p.y, p.z)) : [new THREE.Vector3()],
@@ -2013,12 +2171,12 @@ function onVecInput(e) {
   }
   const axis = AXES[+input.dataset.axis];
   if (input.dataset.prop === 'position') {
-    p.position[axis] = value;
+    p.position[axis] = fromDisp(value);
   } else if (input.dataset.prop === 'rotation') {
     p.rotation[axis] = THREE.MathUtils.degToRad(value);
   } else {
     const size = getSize(p);
-    const v = Math.max(MIN_SIZE, value);
+    const v = Math.max(MIN_SIZE, fromDisp(value));
     if ($('pLock').checked && size[axis] > 0) size.multiplyScalar(v / size[axis]);
     else size[axis] = v;
     setSize(p, size);
@@ -2050,11 +2208,11 @@ for (const id of ['skW', 'skH', 'skD']) {
 $('skExtrude').addEventListener('change', (e) => {
   const v = parseFloat(e.target.value);
   e.target.value = '';
-  if (selectedSketch && Number.isFinite(v)) extrudeSketch(selectedSketch, v);
+  if (selectedSketch && Number.isFinite(v)) extrudeSketch(selectedSketch, fromDisp(v));
 });
 $('skExtrude').addEventListener('keydown', (e) => e.key === 'Enter' && e.target.blur());
 $('pullDist').addEventListener('change', (e) => {
-  pullByTyping(parseFloat(e.target.value));
+  pullByTyping(fromDisp(parseFloat(e.target.value)));
   e.target.value = '0';
 });
 $('pullDist').addEventListener('keydown', (e) => e.key === 'Enter' && e.target.blur());
@@ -2104,7 +2262,7 @@ function refreshPanel() {
     const i = +input.dataset.axis;
     const prop = input.dataset.prop;
     const v = prop === 'size' ? size.getComponent(i) : prop === 'position' ? p.position.getComponent(i) : rot[i];
-    set(input, fmt(v));
+    set(input, prop === 'rotation' ? fmt(v) : fmtLen(v));
   });
 }
 
@@ -2207,6 +2365,7 @@ const actions = {
   'draw-undo': undoDrawPoint,
   'draw-cancel': cancelDraw,
   'draw-finish': finishDraw,
+  'draw-surface': changeSurface,
   'pull-done': () => setMode('translate'),
   help: () => ($('help').hidden = false),
   'help-close': () => ($('help').hidden = true),
@@ -2280,6 +2439,8 @@ window.addEventListener('keydown', (e) => {
 /* ------------------------------------------------------------------ *
  * Start
  * ------------------------------------------------------------------ */
+setUnits(unitKey, false);
+$('unitSelect').addEventListener('change', (e) => setUnits(e.target.value));
 try {
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved) load(JSON.parse(saved));
