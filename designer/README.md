@@ -33,15 +33,17 @@ npm run dev        # open http://localhost:5174
 | **Drop to floor** | Sits the selection on the ground |
 | **Color, name, hide/show** | In the right panel / object list |
 | **Undo / Redo** | `Ctrl+Z` / `Ctrl+Y` (your design is also auto-saved in the browser) |
+| **Units** | mm, cm, m or inches (top bar). Sizes, positions, live measurements, typed numbers, grid and snapping all follow the choice; it is remembered and saved with the design |
 | **Views** | 3D, Top, Front, Side, Fit (`F`) |
 | **Save / Open** | Save your design as `.json` and open it later |
-| **Export** | STL (for 3D printing, 1 grid square = 10 mm), OBJ, GLB |
+| **Export** | STL (for 3D printing, always in millimetres), OBJ (mm), GLB (metres) |
 
 ### Sketch, then pull (example: a block with a pocket)
 
-1. Press **Rectangle** and drag on the ground from corner to corner. A label shows the size (e.g. `3 × 2`).
+1. Press **Rectangle**, then tap the ground (or any face of a part). The camera turns to face that
+   surface and shows a grid on it. Drag from corner to corner; a label shows the size (e.g. `3 × 2 cm`).
 2. Drag the sketch's arrow up (or type `2` in **Extrude**) — it becomes a solid block.
-3. Press **Circle**, tap the top of the block for the centre, then tap again for the edge.
+3. Press **Circle**, tap the top of the block to draw on it, then drag from the centre outward.
 4. Drag that arrow **down** (or type `-1`) to cut a pocket. Pull it **up** instead to add a boss.
 
 **Spin shape** works the same way, but you draw in a side view: draw the right half of

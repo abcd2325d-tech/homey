@@ -37,6 +37,16 @@
         <button data-action="frame" title="Zoom to selection (F)">Fit</button>
       </div>
 
+      <label class="unit-pick" title="Measurement units">
+        <span>Units</span>
+        <select id="unitSelect">
+          <option value="mm">mm</option>
+          <option value="cm">cm</option>
+          <option value="m">m</option>
+          <option value="in">inch</option>
+        </select>
+      </label>
+
       <div class="spacer"></div>
       <button class="mobile-only" data-action="toggle-inspector">Properties</button>
       <button data-action="help" title="Help & shortcuts">?</button>
@@ -153,6 +163,7 @@
             <p id="drawHelp"></p>
           </div>
           <div class="drawbar-buttons">
+            <button id="drawSurface" data-action="draw-surface" hidden title="Pick a different surface to draw on">⟲ Surface</button>
             <button id="drawUndo" data-action="draw-undo">↶ Point</button>
             <button data-action="draw-cancel">Cancel</button>
             <button id="drawFinish" data-action="draw-finish" class="primary">✓ Finish</button>
@@ -211,13 +222,13 @@
 
             <div class="vec">
               <div class="vec-head">
-                <span>Size</span>
+                <span>Size <em class="unit-tag"></em></span>
                 <label class="lock"><input type="checkbox" id="pLock" /> Keep proportions</label>
               </div>
               <div class="xyz" data-prop="size"></div>
             </div>
             <div class="vec">
-              <div class="vec-head"><span>Position</span></div>
+              <div class="vec-head"><span>Position <em class="unit-tag"></em></span></div>
               <div class="xyz" data-prop="position"></div>
             </div>
             <div class="vec">
@@ -239,14 +250,15 @@
         <h2>How to design</h2>
         <ol>
           <li><b>Add shapes</b> from the left panel. If something is selected, the new shape is stacked on top of it.</li>
-          <li><b>Sketch, then pull</b> (like Shapr3D): pick Rectangle, Circle or Line and draw on the ground <i>or on any face of a part</i>. Live measurements show as you draw. Then drag the sketch's arrow: pull out to add material, push in to cut a pocket or hole. You can type exact sizes too.</li>
+          <li><b>Sketch, then pull</b> (like Shapr3D): pick Rectangle, Circle or Line and draw on the ground <i>or on any face of a part</i>. First tap the surface: the camera turns to face it and shows a grid, so drawing is easy. Live measurements show as you draw. Then drag the sketch's arrow: pull out to add material, push in to cut a pocket or hole. You can type exact sizes too.</li>
           <li><b>Spin shape:</b> draw the right half of a side outline (like half a cup). It spins into a round object.</li>
           <li><b>Text:</b> adds 3D letters. Change the words in Properties.</li>
           <li><b>Move, rotate, resize</b> with the arrows on the selected shape, or type exact numbers in Properties.</li>
           <li><b>Push / Pull</b> (like Fusion 360): tap any face, then drag the yellow arrow to make the object thicker or thinner from that side. Holes keep their size. You can also type an exact distance.</li>
           <li><b>Make holes:</b> set a shape to <i>Hole</i>, place it inside another shape, select both and press <b>Combine</b> to cut it out. <b>Align centers</b> puts the hole exactly in the middle.</li>
           <li><b>Combine</b> also glues solid shapes together into one object.</li>
-          <li><b>Export STL</b> to 3D print (1 grid square = 10&nbsp;mm), or GLB/OBJ for other apps.</li>
+          <li><b>Units:</b> choose mm, cm, m or inches at the top. All sizes, measurements and the grid follow your choice.</li>
+          <li><b>Export STL</b> to 3D print (always saved in millimetres, so the print comes out the right size), or GLB/OBJ for other apps.</li>
         </ol>
         <h3>Shortcuts</h3>
         <div class="keys">
