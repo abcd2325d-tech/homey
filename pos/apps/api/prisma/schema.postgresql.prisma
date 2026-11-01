@@ -261,7 +261,7 @@ model ReceiptSequence {
 
 model Sale {
   id            String    @id @default(cuid())
-  receiptNumber String    @unique
+  receiptNumber String?   @unique // assigned on completion only
   locationId    String
   cashierId     String
   status        String    @default("OPEN") // SaleStatus
@@ -370,4 +370,6 @@ model StoreSettings {
   receiptFooterText   String?
   costingMethod       String  @default("WEIGHTED_AVERAGE") // CostingMethod
   lowStockGlobalAlert Boolean @default(true)
+  // Line discounts above this % (basis points, e.g. 2000 = 20%) need manager PIN approval.
+  discountApprovalThresholdBasisPoints Int @default(2000)
 }

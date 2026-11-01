@@ -127,6 +127,15 @@ export async function verifyManagerPin(pin: string) {
   return null;
 }
 
+/** Re-validates an already-PIN-verified approver at the point of use (defense in depth). */
+export async function assertManagerApprover(approverId: string) {
+  const approver = await prisma.user.findUnique({ where: { id: approverId } });
+  if (!approver || !approver.isActive || !["MANAGER", "ADMIN"].includes(approver.role)) {
+    throw Errors.forbidden("A manager or admin must approve this action");
+  }
+  return approver;
+}
+
 export function toPublicUser(user: { id: string; email: string; name: string; role: string; isActive: boolean }) {
   return { id: user.id, email: user.email, name: user.name, role: user.role as Role, isActive: user.isActive };
 }
