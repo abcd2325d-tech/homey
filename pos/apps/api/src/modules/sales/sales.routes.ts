@@ -5,6 +5,8 @@ import { validate } from "../../middleware/validate.js";
 import { zDiscountType, zPaymentMethod, zSaleStatus } from "../../lib/enums.js";
 import { Errors } from "../../lib/errors.js";
 import * as salesService from "./sales.service.js";
+import { getStoreSettings } from "../inventory/stock.service.js";
+import { renderReceiptEscPos, renderReceiptHtml, renderReceiptPdf } from "../receipts/receipt.service.js";
 
 export const salesRouter = Router();
 salesRouter.use(requireAuth);
@@ -149,4 +151,35 @@ salesRouter.post("/:id/refund", validate({ params: paramsSchema, body: refundSch
   const approverId = requireApprover(req, req.body.approverId);
   const sale = await salesService.refundSale(req.params.id, { ...req.body, approverId }, req.user!.id);
   res.json({ data: sale });
+});
+
+async function loadReceiptData(saleId: string) {
+  const sale = await salesService.getSale(saleId);
+  if (sale.status !== "COMPLETED" && sale.status !== "PARTIALLY_REFUNDED" && sale.status !== "REFUNDED") {
+    throw Errors.conflict("A receipt is only available for a completed sale");
+  }
+  const settings = await getStoreSettings();
+  return { sale, settings };
+}
+
+salesRouter.get("/:id/receipt.html", validate({ params: paramsSchema }), async (req, res) => {
+  const { sale, settings } = await loadReceiptData(req.params.id);
+  res.setHeader("Content-Type", "text/html");
+  res.send(renderReceiptHtml(sale, settings));
+});
+
+salesRouter.get("/:id/receipt.pdf", validate({ params: paramsSchema }), async (req, res) => {
+  const { sale, settings } = await loadReceiptData(req.params.id);
+  const pdf = await renderReceiptPdf(sale, settings);
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `inline; filename="receipt-${sale.receiptNumber ?? sale.id}.pdf"`);
+  res.send(pdf);
+});
+
+salesRouter.get("/:id/receipt.escpos", validate({ params: paramsSchema }), async (req, res) => {
+  const { sale, settings } = await loadReceiptData(req.params.id);
+  const bytes = renderReceiptEscPos(sale, settings);
+  res.setHeader("Content-Type", "application/octet-stream");
+  res.setHeader("Content-Disposition", `attachment; filename="receipt-${sale.receiptNumber ?? sale.id}.bin"`);
+  res.send(bytes);
 });

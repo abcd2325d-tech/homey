@@ -4,6 +4,7 @@ import { requireAuth, requireRole } from "../../middleware/auth.js";
 import { validate } from "../../middleware/validate.js";
 import { zBarcodeType } from "../../lib/enums.js";
 import { Errors } from "../../lib/errors.js";
+import { assertManagerApprover } from "../auth/auth.service.js";
 import * as productsService from "./products.service.js";
 
 export const productsRouter = Router();
@@ -86,14 +87,21 @@ const productInputSchema = z.object({
   unit: z.string().max(10).optional(),
   imageUrl: z.string().url().max(1000).nullable().optional(),
   isActive: z.boolean().optional(),
-  barcodes: z.array(barcodeInputSchema).max(20).optional()
+  barcodes: z.array(barcodeInputSchema).max(20).optional(),
+  // Only read for a CASHIER caller: lets the register's "unknown barcode"
+  // flow create a product on the spot with a manager's PIN-verified
+  // approval, the same pattern sales discounts/voids use.
+  approverId: z.string().min(1).optional()
 });
 
 productsRouter.post(
   "/",
-  requireRole("ADMIN", "MANAGER"),
   validate({ body: productInputSchema }),
   async (req, res) => {
+    if (req.user!.role === "CASHIER") {
+      if (!req.body.approverId) throw Errors.forbidden("Creating a new product requires manager approval");
+      await assertManagerApprover(req.body.approverId);
+    }
     const product = await productsService.createProduct(req.body, req.user!.id);
     res.status(201).json({ data: product });
   }

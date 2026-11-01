@@ -142,6 +142,23 @@ describe("products", () => {
     expect(audit.body.data.some((e: { action: string }) => e.action === "PRICE_CHANGED")).toBe(true);
   });
 
+  it("lets a cashier create a product only with a manager approver (the unknown-barcode flow)", async () => {
+    const { accessToken: cashierToken } = await createTestUser({ role: "CASHIER" });
+    const { user: manager } = await createTestUser({ role: "MANAGER" });
+
+    const blocked = await request(app)
+      .post("/api/products")
+      .set("Authorization", `Bearer ${cashierToken}`)
+      .send({ sku: "CASHIER-ADD", name: "Scanned Item", costPriceCents: 100, sellPriceCents: 200 });
+    expect(blocked.status).toBe(403);
+
+    const approved = await request(app)
+      .post("/api/products")
+      .set("Authorization", `Bearer ${cashierToken}`)
+      .send({ sku: "CASHIER-ADD", name: "Scanned Item", costPriceCents: 100, sellPriceCents: 200, approverId: manager.id });
+    expect(approved.status).toBe(201);
+  });
+
   it("filters by search term", async () => {
     const { accessToken } = await createTestUser({ role: "MANAGER" });
     await request(app)
