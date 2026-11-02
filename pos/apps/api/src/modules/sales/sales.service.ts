@@ -17,8 +17,25 @@ const SALE_INCLUDE = {
   refunds: { include: { lines: true } }
 } satisfies Prisma.SaleInclude;
 
-export async function createSale(locationId: string, cashierId: string) {
-  return prisma.sale.create({ data: { locationId, cashierId, status: "OPEN" }, include: SALE_INCLUDE });
+export async function createSale(locationId: string, cashierId: string, customerId?: string) {
+  if (customerId) {
+    const customer = await prisma.customer.findUnique({ where: { id: customerId } });
+    if (!customer) throw Errors.notFound("Customer", customerId);
+  }
+  return prisma.sale.create({ data: { locationId, cashierId, customerId, status: "OPEN" }, include: SALE_INCLUDE });
+}
+
+export async function attachCustomer(saleId: string, customerId: string | null) {
+  const sale = await prisma.sale.findUnique({ where: { id: saleId } });
+  if (!sale) throw Errors.notFound("Sale", saleId);
+  if (sale.status !== "OPEN" && sale.status !== "HELD") {
+    throw Errors.conflict(`Cannot change the customer on a sale in status ${sale.status}`);
+  }
+  if (customerId) {
+    const customer = await prisma.customer.findUnique({ where: { id: customerId } });
+    if (!customer) throw Errors.notFound("Customer", customerId);
+  }
+  return prisma.sale.update({ where: { id: saleId }, data: { customerId }, include: SALE_INCLUDE });
 }
 
 export async function getSale(id: string, db: Tx | typeof prisma = prisma) {
@@ -286,6 +303,28 @@ export async function addPayment(saleId: string, input: AddPaymentInput) {
     });
   }
 
+  if (input.method === "LOYALTY") {
+    if (!sale.customerId) throw Errors.badRequest("Attach a customer to the sale before redeeming loyalty points");
+
+    return prisma.$transaction(async (tx) => {
+      const [customer, settings] = await Promise.all([
+        tx.customer.findUniqueOrThrow({ where: { id: sale.customerId! } }),
+        getStoreSettings(tx)
+      ]);
+      const pointValue = Math.max(settings.loyaltyPointValueCents, 1);
+      const pointsNeeded = Math.ceil(input.amountCents / pointValue);
+      if (pointsNeeded > customer.loyaltyPoints) {
+        throw Errors.badRequest(
+          `Customer has ${customer.loyaltyPoints} points, which isn't enough to cover ${input.amountCents} cents (needs ${pointsNeeded})`
+        );
+      }
+
+      await tx.customer.update({ where: { id: customer.id }, data: { loyaltyPoints: { decrement: pointsNeeded } } });
+      await tx.sale.update({ where: { id: saleId }, data: { loyaltyPointsRedeemed: { increment: pointsNeeded } } });
+      return tx.payment.create({ data: { saleId, method: "LOYALTY", amountCents: input.amountCents } });
+    });
+  }
+
   return prisma.payment.create({ data: { saleId, method: "OTHER", amountCents: input.amountCents } });
 }
 
@@ -324,9 +363,23 @@ export async function completeSale(saleId: string, userId: string) {
 
     const receiptNumber = await nextReceiptNumber(tx, sale.locationId);
 
+    // Earn points on what was actually paid with cash/card/other — not on
+    // the portion covered by redeeming points, which would otherwise let a
+    // customer mint points by redeeming points.
+    let loyaltyPointsEarned = 0;
+    if (sale.customerId) {
+      const settings = await getStoreSettings(tx);
+      const loyaltyPaidCents = sale.payments.filter((p) => p.method === "LOYALTY").reduce((sum, p) => sum + p.amountCents, 0);
+      const earnableCents = Math.max(sale.totalCents - loyaltyPaidCents, 0);
+      loyaltyPointsEarned = Math.floor(earnableCents / 100) * settings.loyaltyPointsPerDollar;
+      if (loyaltyPointsEarned > 0) {
+        await tx.customer.update({ where: { id: sale.customerId }, data: { loyaltyPoints: { increment: loyaltyPointsEarned } } });
+      }
+    }
+
     return tx.sale.update({
       where: { id: saleId },
-      data: { status: "COMPLETED", completedAt: new Date(), receiptNumber },
+      data: { status: "COMPLETED", completedAt: new Date(), receiptNumber, loyaltyPointsEarned },
       include: SALE_INCLUDE
     });
   });

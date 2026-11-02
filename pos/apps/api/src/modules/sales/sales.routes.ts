@@ -40,10 +40,10 @@ salesRouter.get("/held", validate({ query: z.object({ locationId: z.string().max
   res.json({ data: await salesService.listHeldSales(req.query.locationId as string | undefined) });
 });
 
-const createSaleSchema = z.object({ locationId: z.string().min(1) });
+const createSaleSchema = z.object({ locationId: z.string().min(1), customerId: z.string().min(1).optional() });
 
 salesRouter.post("/", validate({ body: createSaleSchema }), async (req, res) => {
-  const sale = await salesService.createSale(req.body.locationId, req.user!.id);
+  const sale = await salesService.createSale(req.body.locationId, req.user!.id, req.body.customerId);
   res.status(201).json({ data: sale });
 });
 
@@ -51,6 +51,12 @@ const paramsSchema = z.object({ id: z.string().min(1) });
 
 salesRouter.get("/:id", validate({ params: paramsSchema }), async (req, res) => {
   res.json({ data: await salesService.getSale(req.params.id) });
+});
+
+const customerSchema = z.object({ customerId: z.string().min(1).nullable() });
+
+salesRouter.post("/:id/customer", validate({ params: paramsSchema, body: customerSchema }), async (req, res) => {
+  res.json({ data: await salesService.attachCustomer(req.params.id, req.body.customerId) });
 });
 
 const addLineSchema = z.object({

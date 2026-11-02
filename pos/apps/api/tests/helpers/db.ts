@@ -26,4 +26,5 @@ export async function resetDb() {
   await prisma.user.deleteMany();
   await prisma.barcodeLookupCache.deleteMany();
   await prisma.storeSettings.deleteMany();
+  await prisma.customer.deleteMany();
 }

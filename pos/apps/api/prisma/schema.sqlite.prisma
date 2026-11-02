@@ -112,18 +112,30 @@ model Product {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  category   Category?           @relation(fields: [categoryId], references: [id])
-  supplier   Supplier?           @relation(fields: [supplierId], references: [id])
-  taxRate    TaxRate?            @relation(fields: [taxRateId], references: [id])
-  barcodes   ProductBarcode[]
-  stockItems StockItem[]
-  movements  StockMovement[]
-  costLayers CostLayer[]
-  saleLines  SaleLine[]
-  poLines    PurchaseOrderLine[]
-  countLines StockCountLine[]
+  // A variant (e.g. "OPI Nail Polish — Red, 15ml") is a full Product row of
+  // its own — with its own SKU/barcode/price/stock, so it reuses every
+  // existing stock and sales code path untouched — linked to a parent
+  // "group" Product. The parent is typically isActive=false (not itself
+  // sellable; it just holds the shared name/category for the group).
+  // variantAttributes is a small JSON blob for display, e.g. {"color":"Red","size":"15ml"}.
+  parentProductId  String?
+  variantAttributes String?
+
+  category     Category?           @relation(fields: [categoryId], references: [id])
+  supplier     Supplier?           @relation(fields: [supplierId], references: [id])
+  taxRate      TaxRate?            @relation(fields: [taxRateId], references: [id])
+  parent       Product?            @relation("ProductVariants", fields: [parentProductId], references: [id])
+  variants     Product[]           @relation("ProductVariants")
+  barcodes     ProductBarcode[]
+  stockItems   StockItem[]
+  movements    StockMovement[]
+  costLayers   CostLayer[]
+  saleLines    SaleLine[]
+  poLines      PurchaseOrderLine[]
+  countLines   StockCountLine[]
 
   @@index([name])
+  @@index([parentProductId])
 }
 
 model ProductBarcode {
@@ -186,15 +198,25 @@ model StockMovement {
   @@index([createdAt])
 }
 
+// A batch of stock received at a point in time. Always created on every
+// inbound movement and consumed oldest-first on every outbound movement,
+// regardless of costing method — it's the source of lot/expiration
+// tracking either way. Under FIFO costing it additionally IS the cost
+// basis; under weighted-average costing the cost math instead lives on
+// StockItem.averageCostCents and this table is purely for tracking.
 model CostLayer {
-  id                String   @id @default(cuid())
+  id                String    @id @default(cuid())
   productId         String
   locationId        String
   quantityRemaining Int
   unitCostCents     Int
-  receivedAt        DateTime @default(now())
+  lotNumber         String?
+  expirationDate    DateTime?
+  receivedAt        DateTime  @default(now())
 
   product Product @relation(fields: [productId], references: [id])
+
+  @@index([expirationDate])
 
   @@index([productId, locationId, receivedAt])
 }
@@ -260,23 +282,27 @@ model ReceiptSequence {
 }
 
 model Sale {
-  id            String    @id @default(cuid())
-  receiptNumber String?   @unique // assigned on completion only
-  locationId    String
-  cashierId     String
-  status        String    @default("OPEN") // SaleStatus
-  subtotalCents Int       @default(0)
-  discountCents Int       @default(0)
-  taxCents      Int       @default(0)
-  totalCents    Int       @default(0)
-  heldLabel     String?
-  voidReason    String?
-  voidedById    String?
-  createdAt     DateTime  @default(now())
-  completedAt   DateTime?
+  id                     String    @id @default(cuid())
+  receiptNumber          String?   @unique // assigned on completion only
+  locationId             String
+  cashierId              String
+  customerId             String?
+  status                 String    @default("OPEN") // SaleStatus
+  subtotalCents          Int       @default(0)
+  discountCents          Int       @default(0)
+  taxCents               Int       @default(0)
+  totalCents             Int       @default(0)
+  loyaltyPointsEarned    Int       @default(0)
+  loyaltyPointsRedeemed  Int       @default(0)
+  heldLabel              String?
+  voidReason             String?
+  voidedById             String?
+  createdAt              DateTime  @default(now())
+  completedAt            DateTime?
 
   location Location   @relation(fields: [locationId], references: [id])
   cashier  User       @relation("SaleCashier", fields: [cashierId], references: [id])
+  customer Customer?  @relation(fields: [customerId], references: [id])
   voidedBy User?      @relation("SaleVoider", fields: [voidedById], references: [id])
   lines    SaleLine[]
   payments Payment[]
@@ -284,6 +310,7 @@ model Sale {
 
   @@index([status])
   @@index([createdAt])
+  @@index([customerId])
 }
 
 model SaleLine {
@@ -372,4 +399,21 @@ model StoreSettings {
   lowStockGlobalAlert Boolean @default(true)
   // Line discounts above this % (basis points, e.g. 2000 = 20%) need manager PIN approval.
   discountApprovalThresholdBasisPoints Int @default(2000)
+  // Loyalty points earned per whole dollar of a completed sale's total. 0 disables earning.
+  loyaltyPointsPerDollar Int @default(1)
+  // Cents a single redeemed loyalty point is worth when applied as a discount.
+  loyaltyPointValueCents Int @default(1)
+}
+
+model Customer {
+  id            String   @id @default(cuid())
+  name          String
+  phone         String?  @unique
+  email         String?
+  loyaltyPoints Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  sales Sale[]
+
+  @@index([name])
 }

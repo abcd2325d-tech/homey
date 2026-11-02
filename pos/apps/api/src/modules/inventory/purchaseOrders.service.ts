@@ -62,6 +62,8 @@ export async function sendPurchaseOrder(id: string) {
 export interface ReceiveLineInput {
   lineId: string;
   quantityReceivedDelta: number;
+  lotNumber?: string;
+  expirationDate?: Date;
 }
 
 export async function receivePurchaseOrder(id: string, lines: ReceiveLineInput[], userId: string) {
@@ -95,6 +97,8 @@ export async function receivePurchaseOrder(id: string, lines: ReceiveLineInput[]
         type: "PURCHASE_RECEIPT",
         deltaMilliUnits: input.quantityReceivedDelta,
         unitCostCents: line.unitCostCents,
+        lotNumber: input.lotNumber,
+        expirationDate: input.expirationDate,
         userId,
         reference: po.id
       });

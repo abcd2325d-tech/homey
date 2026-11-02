@@ -6,7 +6,7 @@
 export const ROLES = ["ADMIN", "MANAGER", "CASHIER"] as const;
 export type Role = (typeof ROLES)[number];
 
-export const PAYMENT_METHODS = ["CASH", "CARD", "OTHER"] as const;
+export const PAYMENT_METHODS = ["CASH", "CARD", "OTHER", "LOYALTY"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
 export const DISCOUNT_TYPES = ["PERCENT", "FIXED"] as const;

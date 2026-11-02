@@ -33,11 +33,28 @@ stockRouter.get("/valuation", requireRole("ADMIN", "MANAGER"), validate({ query:
   res.json({ data: report });
 });
 
+const expiringQuerySchema = z.object({
+  locationId: z.string().max(100).optional(),
+  withinDays: z.coerce.number().int().min(1).max(3650).default(30)
+});
+
+stockRouter.get(
+  "/expiring-soon",
+  requireRole("ADMIN", "MANAGER"),
+  validate({ query: expiringQuerySchema }),
+  async (req, res) => {
+    const { locationId, withinDays } = req.query as unknown as z.infer<typeof expiringQuerySchema>;
+    res.json({ data: await stockService.expiringBatches(withinDays, locationId) });
+  }
+);
+
 const adjustmentSchema = z.object({
   productId: z.string().min(1),
   locationId: z.string().min(1),
   deltaMilliUnits: z.number().int().refine((v) => v !== 0, "deltaMilliUnits cannot be zero"),
   unitCostCents: z.number().int().min(0).optional(),
+  lotNumber: z.string().max(100).optional(),
+  expirationDate: z.coerce.date().optional(),
   reason: z.string().min(1).max(500)
 });
 

@@ -117,6 +117,35 @@ productsRouter.patch(
   }
 );
 
+productsRouter.get("/:id/variants", validate({ params: idParamsSchema }), async (req, res) => {
+  res.json({ data: await productsService.listVariants(req.params.id) });
+});
+
+const variantInputSchema = z.object({
+  sku: z.string().min(1).max(64),
+  name: z.string().min(1).max(300).optional(),
+  costPriceCents: z.number().int().min(0),
+  sellPriceCents: z.number().int().min(0),
+  categoryId: z.string().max(100).nullable().optional(),
+  supplierId: z.string().max(100).nullable().optional(),
+  taxRateId: z.string().max(100).nullable().optional(),
+  priceIncludesTax: z.boolean().optional(),
+  unit: z.string().max(10).optional(),
+  isActive: z.boolean().optional(),
+  variantAttributes: z.record(z.string().max(100)).optional(),
+  barcodes: z.array(barcodeInputSchema).max(20).optional()
+});
+
+productsRouter.post(
+  "/:id/variants",
+  requireRole("ADMIN", "MANAGER"),
+  validate({ params: idParamsSchema, body: variantInputSchema }),
+  async (req, res) => {
+    const variant = await productsService.createVariant(req.params.id, req.body, req.user!.id);
+    res.status(201).json({ data: variant });
+  }
+);
+
 productsRouter.post(
   "/:id/barcodes",
   requireRole("ADMIN", "MANAGER"),

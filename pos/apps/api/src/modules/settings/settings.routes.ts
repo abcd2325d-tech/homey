@@ -25,7 +25,9 @@ const updateSchema = z.object({
   receiptFooterText: z.string().max(1000).nullable().optional(),
   costingMethod: zCostingMethod.optional(),
   lowStockGlobalAlert: z.boolean().optional(),
-  discountApprovalThresholdBasisPoints: z.number().int().min(0).max(10000).optional()
+  discountApprovalThresholdBasisPoints: z.number().int().min(0).max(10000).optional(),
+  loyaltyPointsPerDollar: z.number().int().min(0).max(1000).optional(),
+  loyaltyPointValueCents: z.number().int().min(1).max(100000).optional()
 });
 
 settingsRouter.patch("/", validate({ body: updateSchema }), async (req, res) => {

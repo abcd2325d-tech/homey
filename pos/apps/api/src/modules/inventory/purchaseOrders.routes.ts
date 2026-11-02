@@ -48,7 +48,14 @@ purchaseOrdersRouter.post("/:id/send", validate({ params: paramsSchema }), async
 
 const receiveSchema = z.object({
   lines: z
-    .array(z.object({ lineId: z.string().min(1), quantityReceivedDelta: z.number().int().positive() }))
+    .array(
+      z.object({
+        lineId: z.string().min(1),
+        quantityReceivedDelta: z.number().int().positive(),
+        lotNumber: z.string().max(100).optional(),
+        expirationDate: z.coerce.date().optional()
+      })
+    )
     .min(1)
     .max(200)
 });

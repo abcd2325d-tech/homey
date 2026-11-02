@@ -21,6 +21,7 @@ import { salesRouter } from "./modules/sales/sales.routes.js";
 import { barcodeLookupRouter } from "./modules/barcodeLookup/barcodeLookup.routes.js";
 import { reportsRouter } from "./modules/reports/reports.routes.js";
 import { settingsRouter } from "./modules/settings/settings.routes.js";
+import { customersRouter } from "./modules/customers/customers.routes.js";
 
 export function buildApp() {
   const app = express();
@@ -51,6 +52,7 @@ export function buildApp() {
   app.use("/api/barcode-lookup", barcodeLookupRouter);
   app.use("/api/reports", reportsRouter);
   app.use("/api/settings", settingsRouter);
+  app.use("/api/customers", customersRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

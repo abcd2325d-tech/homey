@@ -28,6 +28,22 @@ export interface ProductInput {
   barcodes?: BarcodeInput[];
 }
 
+export interface VariantInput {
+  sku: string;
+  name?: string;
+  costPriceCents: number;
+  sellPriceCents: number;
+  categoryId?: string | null;
+  supplierId?: string | null;
+  taxRateId?: string | null;
+  priceIncludesTax?: boolean;
+  unit?: string;
+  isActive?: boolean;
+  /** Free-form, e.g. { color: "Red", size: "15ml" } — stored as JSON, shown in the UI. */
+  variantAttributes?: Record<string, string>;
+  barcodes?: BarcodeInput[];
+}
+
 function validateBarcodes(barcodes: BarcodeInput[] = []): { code: string; type: BarcodeType; isPrimary: boolean }[] {
   return barcodes.map((b, index) => {
     const type = b.type ?? detectBarcodeType(b.code);
@@ -66,7 +82,7 @@ export async function listProducts(params: ListProductsParams) {
   const [items, total] = await Promise.all([
     prisma.product.findMany({
       where,
-      include: { barcodes: true, category: true, supplier: true, taxRate: true },
+      include: { barcodes: true, category: true, supplier: true, taxRate: true, _count: { select: { variants: true } } },
       orderBy: { name: "asc" },
       take: params.take ?? 50,
       skip: params.skip ?? 0
@@ -80,10 +96,59 @@ export async function listProducts(params: ListProductsParams) {
 export async function getProduct(id: string) {
   const product = await prisma.product.findUnique({
     where: { id },
-    include: { barcodes: true, category: true, supplier: true, taxRate: true }
+    include: { barcodes: true, category: true, supplier: true, taxRate: true, variants: { include: { barcodes: true } }, parent: true }
   });
   if (!product) throw Errors.notFound("Product", id);
   return product;
+}
+
+export async function listVariants(parentId: string) {
+  const parent = await prisma.product.findUnique({ where: { id: parentId } });
+  if (!parent) throw Errors.notFound("Product", parentId);
+  return prisma.product.findMany({ where: { parentProductId: parentId }, include: { barcodes: true }, orderBy: { name: "asc" } });
+}
+
+export async function createVariant(parentId: string, input: VariantInput, actingUserId: string) {
+  const parent = await prisma.product.findUnique({ where: { id: parentId } });
+  if (!parent) throw Errors.notFound("Product", parentId);
+  if (parent.parentProductId) {
+    throw Errors.badRequest("Cannot add a variant to a variant — add it to the top-level group product instead");
+  }
+
+  const existingSku = await prisma.product.findUnique({ where: { sku: input.sku } });
+  if (existingSku) throw Errors.conflict(`SKU "${input.sku}" is already in use`);
+
+  const barcodes = validateBarcodes(input.barcodes);
+  await assertBarcodesAvailable(barcodes.map((b) => b.code));
+
+  const variant = await prisma.product.create({
+    data: {
+      sku: input.sku,
+      name: input.name ?? parent.name,
+      parentProductId: parent.id,
+      variantAttributes: input.variantAttributes ? JSON.stringify(input.variantAttributes) : null,
+      categoryId: input.categoryId ?? parent.categoryId,
+      supplierId: input.supplierId ?? parent.supplierId,
+      costPriceCents: input.costPriceCents,
+      sellPriceCents: input.sellPriceCents,
+      taxRateId: input.taxRateId ?? parent.taxRateId,
+      priceIncludesTax: input.priceIncludesTax ?? parent.priceIncludesTax,
+      unit: input.unit ?? parent.unit,
+      isActive: input.isActive ?? true,
+      barcodes: { create: barcodes }
+    },
+    include: { barcodes: true }
+  });
+
+  await recordAudit({
+    userId: actingUserId,
+    action: "VARIANT_CREATED",
+    entityType: "Product",
+    entityId: variant.id,
+    after: { parentProductId: parent.id, sku: variant.sku, variantAttributes: input.variantAttributes }
+  });
+
+  return variant;
 }
 
 export async function findByBarcode(code: string) {
