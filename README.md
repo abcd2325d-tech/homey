@@ -11,6 +11,10 @@ stay, and manage listings as a host. Includes a bottom tab bar for phone-sized s
 > **Also in this repo:** [`designer/`](designer/) — *Shaper 3D*, a simple standalone browser
 > app for designing 3D models (shapes, holes, combine, export to STL/OBJ/GLB). See
 > [designer/README.md](designer/README.md).
+>
+> **Also in this repo:** [`pos/`](pos/) — a Point of Sale and inventory management system
+> (Node/Express/Prisma backend, React/Vite frontend, multi-location stock, barcode
+> scanning, receipts, reports). See [pos/README.md](pos/README.md).
 
 ## Project structure
 

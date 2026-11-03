@@ -1,0 +1,419 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Conventions:
+//   - All money fields are Int, stored in minor units (cents).
+//   - All quantity fields are Int, stored in "milli-units" (value * 1000),
+//     e.g. 1000 = 1.000 EACH, 2500 = 2.500 KG. See src/lib/qty.ts.
+//   - "Enum" fields are plain String columns, not Prisma enums: SQLite's
+//     connector has no native enum support, and this keeps schema.sqlite.prisma
+//     and schema.postgresql.prisma byte-for-byte identical except the
+//     datasource block (the whole point of the dual-schema setup). The
+//     allowed values live as TS literal-union types in packages/shared and
+//     are enforced with zod at the API boundary — see src/lib/enums.ts.
+// ──────────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         String // Role: ADMIN | MANAGER | CASHIER
+  pinHash      String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  refreshTokens   RefreshToken[]
+  auditLogs       AuditLog[]
+  salesAsCashier  Sale[]              @relation("SaleCashier")
+  stockMovements  StockMovement[]
+  purchaseOrders  PurchaseOrder[]
+  stockCounts     StockCountSession[]
+  approvedRefunds Refund[]            @relation("RefundApprover")
+  voidedSales     Sale[]              @relation("SaleVoider")
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String
+  beforeJson String?
+  afterJson  String?
+  metadata   String?
+  createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model Category {
+  id       String     @id @default(cuid())
+  name     String     @unique
+  parentId String?
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryTree")
+  products Product[]
+}
+
+model Supplier {
+  id             String          @id @default(cuid())
+  name           String
+  contactName    String?
+  email          String?
+  phone          String?
+  address        String?
+  products       Product[]
+  purchaseOrders PurchaseOrder[]
+}
+
+model TaxRate {
+  id              String    @id @default(cuid())
+  name            String
+  rateBasisPoints Int
+  isDefault       Boolean   @default(false)
+  products        Product[]
+}
+
+model Product {
+  id               String   @id @default(cuid())
+  sku              String   @unique
+  name             String
+  description      String?
+  categoryId       String?
+  supplierId       String?
+  costPriceCents   Int
+  sellPriceCents   Int
+  taxRateId        String?
+  priceIncludesTax Boolean  @default(false)
+  unit             String   @default("EACH") // UnitOfMeasure
+  imageUrl         String?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // A variant (e.g. "OPI Nail Polish — Red, 15ml") is a full Product row of
+  // its own — with its own SKU/barcode/price/stock, so it reuses every
+  // existing stock and sales code path untouched — linked to a parent
+  // "group" Product. The parent is typically isActive=false (not itself
+  // sellable; it just holds the shared name/category for the group).
+  // variantAttributes is a small JSON blob for display, e.g. {"color":"Red","size":"15ml"}.
+  parentProductId  String?
+  variantAttributes String?
+
+  category     Category?           @relation(fields: [categoryId], references: [id])
+  supplier     Supplier?           @relation(fields: [supplierId], references: [id])
+  taxRate      TaxRate?            @relation(fields: [taxRateId], references: [id])
+  parent       Product?            @relation("ProductVariants", fields: [parentProductId], references: [id])
+  variants     Product[]           @relation("ProductVariants")
+  barcodes     ProductBarcode[]
+  stockItems   StockItem[]
+  movements    StockMovement[]
+  costLayers   CostLayer[]
+  saleLines    SaleLine[]
+  poLines      PurchaseOrderLine[]
+  countLines   StockCountLine[]
+
+  @@index([name])
+  @@index([parentProductId])
+}
+
+model ProductBarcode {
+  id        String  @id @default(cuid())
+  productId String
+  code      String  @unique
+  type      String // BarcodeType
+  isPrimary Boolean @default(false)
+  product   Product @relation(fields: [productId], references: [id])
+
+  @@index([code])
+}
+
+model Location {
+  id       String  @id @default(cuid())
+  name     String
+  address  String?
+  isActive Boolean @default(true)
+
+  stockItems      StockItem[]
+  movements       StockMovement[]
+  sales           Sale[]
+  purchaseOrders  PurchaseOrder[]
+  stockCounts     StockCountSession[]
+  receiptSequence ReceiptSequence?
+}
+
+model StockItem {
+  id               String @id @default(cuid())
+  productId        String
+  locationId       String
+  quantityOnHand   Int    @default(0)
+  reorderPoint     Int    @default(0)
+  reorderQuantity  Int    @default(0)
+  averageCostCents Int    @default(0)
+
+  product  Product  @relation(fields: [productId], references: [id])
+  location Location @relation(fields: [locationId], references: [id])
+
+  @@unique([productId, locationId])
+}
+
+model StockMovement {
+  id            String   @id @default(cuid())
+  productId     String
+  locationId    String
+  type          String // StockMovementType
+  quantity      Int
+  unitCostCents Int?
+  userId        String
+  reference     String?
+  note          String?
+  createdAt     DateTime @default(now())
+
+  product  Product  @relation(fields: [productId], references: [id])
+  location Location @relation(fields: [locationId], references: [id])
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@index([productId, locationId])
+  @@index([createdAt])
+}
+
+// A batch of stock received at a point in time. Always created on every
+// inbound movement and consumed oldest-first on every outbound movement,
+// regardless of costing method — it's the source of lot/expiration
+// tracking either way. Under FIFO costing it additionally IS the cost
+// basis; under weighted-average costing the cost math instead lives on
+// StockItem.averageCostCents and this table is purely for tracking.
+model CostLayer {
+  id                String    @id @default(cuid())
+  productId         String
+  locationId        String
+  quantityRemaining Int
+  unitCostCents     Int
+  lotNumber         String?
+  expirationDate    DateTime?
+  receivedAt        DateTime  @default(now())
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([expirationDate])
+
+  @@index([productId, locationId, receivedAt])
+}
+
+model PurchaseOrder {
+  id           String    @id @default(cuid())
+  poNumber     String    @unique
+  supplierId   String
+  locationId   String
+  status       String    @default("DRAFT") // PurchaseOrderStatus
+  createdById  String
+  expectedDate DateTime?
+  notes        String?
+  createdAt    DateTime  @default(now())
+
+  supplier  Supplier            @relation(fields: [supplierId], references: [id])
+  location  Location            @relation(fields: [locationId], references: [id])
+  createdBy User                @relation(fields: [createdById], references: [id])
+  lines     PurchaseOrderLine[]
+}
+
+model PurchaseOrderLine {
+  id               String @id @default(cuid())
+  purchaseOrderId  String
+  productId        String
+  quantityOrdered  Int
+  quantityReceived Int    @default(0)
+  unitCostCents    Int
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  product       Product       @relation(fields: [productId], references: [id])
+}
+
+model StockCountSession {
+  id          String    @id @default(cuid())
+  locationId  String
+  status      String    @default("OPEN") // StockCountStatus
+  startedById String
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  location  Location         @relation(fields: [locationId], references: [id])
+  startedBy User             @relation(fields: [startedById], references: [id])
+  lines     StockCountLine[]
+}
+
+model StockCountLine {
+  id               String @id @default(cuid())
+  sessionId        String
+  productId        String
+  countedQuantity  Int
+  expectedQuantity Int
+  varianceQuantity Int
+
+  session StockCountSession @relation(fields: [sessionId], references: [id])
+  product Product           @relation(fields: [productId], references: [id])
+}
+
+model ReceiptSequence {
+  locationId String   @id
+  nextNumber Int      @default(1)
+  location   Location @relation(fields: [locationId], references: [id])
+}
+
+model Sale {
+  id                     String    @id @default(cuid())
+  receiptNumber          String?   @unique // assigned on completion only
+  locationId             String
+  cashierId              String
+  customerId             String?
+  status                 String    @default("OPEN") // SaleStatus
+  subtotalCents          Int       @default(0)
+  discountCents          Int       @default(0)
+  taxCents               Int       @default(0)
+  totalCents             Int       @default(0)
+  loyaltyPointsEarned    Int       @default(0)
+  loyaltyPointsRedeemed  Int       @default(0)
+  heldLabel              String?
+  voidReason             String?
+  voidedById             String?
+  createdAt              DateTime  @default(now())
+  completedAt            DateTime?
+
+  location Location   @relation(fields: [locationId], references: [id])
+  cashier  User       @relation("SaleCashier", fields: [cashierId], references: [id])
+  customer Customer?  @relation(fields: [customerId], references: [id])
+  voidedBy User?      @relation("SaleVoider", fields: [voidedById], references: [id])
+  lines    SaleLine[]
+  payments Payment[]
+  refunds  Refund[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([customerId])
+}
+
+model SaleLine {
+  id                 String  @id @default(cuid())
+  saleId             String
+  productId          String
+  quantity           Int
+  unitPriceCents     Int
+  unitCostCents      Int
+  discountCents      Int     @default(0)
+  discountType       String? // DiscountType
+  taxRateBasisPoints Int     @default(0)
+  taxCents           Int     @default(0)
+  lineTotalCents     Int
+  isVoided           Boolean @default(false)
+
+  sale        Sale         @relation(fields: [saleId], references: [id])
+  product     Product      @relation(fields: [productId], references: [id])
+  refundLines RefundLine[]
+}
+
+model Payment {
+  id            String   @id @default(cuid())
+  saleId        String
+  method        String // PaymentMethod
+  amountCents   Int
+  tenderedCents Int?
+  changeCents   Int?
+  providerRef   String?
+  createdAt     DateTime @default(now())
+
+  sale Sale @relation(fields: [saleId], references: [id])
+}
+
+model Refund {
+  id           String   @id @default(cuid())
+  saleId       String
+  reason       String
+  approvedById String
+  amountCents  Int
+  createdAt    DateTime @default(now())
+
+  sale       Sale         @relation(fields: [saleId], references: [id])
+  approvedBy User         @relation("RefundApprover", fields: [approvedById], references: [id])
+  lines      RefundLine[]
+}
+
+model RefundLine {
+  id          String @id @default(cuid())
+  refundId    String
+  saleLineId  String
+  quantity    Int
+  amountCents Int
+
+  refund   Refund   @relation(fields: [refundId], references: [id])
+  saleLine SaleLine @relation(fields: [saleLineId], references: [id])
+}
+
+model BarcodeLookupCache {
+  id                 String   @id @default(cuid())
+  barcode            String   @unique
+  found              Boolean
+  provider           String?
+  rawResponseJson    String?
+  normalizedName     String?
+  normalizedBrand    String?
+  normalizedCategory String?
+  normalizedImageUrl String?
+  normalizedDesc     String?
+  lookedUpAt         DateTime @default(now())
+
+  @@index([found])
+}
+
+model StoreSettings {
+  id                  Int     @id @default(1)
+  storeName           String  @default("My Store")
+  address             String?
+  taxId               String?
+  logoUrl             String?
+  currencyCode        String  @default("USD")
+  locale              String  @default("en-US")
+  defaultTaxRateId    String?
+  receiptFooterText   String?
+  costingMethod       String  @default("WEIGHTED_AVERAGE") // CostingMethod
+  lowStockGlobalAlert Boolean @default(true)
+  // Line discounts above this % (basis points, e.g. 2000 = 20%) need manager PIN approval.
+  discountApprovalThresholdBasisPoints Int @default(2000)
+  // Loyalty points earned per whole dollar of a completed sale's total. 0 disables earning.
+  loyaltyPointsPerDollar Int @default(1)
+  // Cents a single redeemed loyalty point is worth when applied as a discount.
+  loyaltyPointValueCents Int @default(1)
+}
+
+model Customer {
+  id            String   @id @default(cuid())
+  name          String
+  phone         String?  @unique
+  email         String?
+  loyaltyPoints Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  sales Sale[]
+
+  @@index([name])
+}
