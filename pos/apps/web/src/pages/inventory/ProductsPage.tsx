@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../../lib/api.js";
 import { ApiError } from "../../lib/api.js";
 import { formatCents } from "../../lib/format.js";
+import { VariantsModal } from "../../components/inventory/VariantsModal.js";
 import type { Product } from "../../lib/types.js";
 
 interface Category {
@@ -14,6 +15,7 @@ export function ProductsPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<Partial<Product> | null>(null);
+  const [managingVariantsOf, setManagingVariantsOf] = useState<Product | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
@@ -40,7 +42,8 @@ export function ProductsPage() {
         categoryId: editing.categoryId || null,
         costPriceCents: editing.costPriceCents ?? 0,
         sellPriceCents: editing.sellPriceCents ?? 0,
-        unit: editing.unit || "EACH"
+        unit: editing.unit || "EACH",
+        isActive: editing.isActive ?? true
       };
       if (editing.id) {
         await api.patch(`/products/${editing.id}`, payload);
@@ -90,6 +93,7 @@ export function ProductsPage() {
             <th className="p-3">Category</th>
             <th className="p-3">Cost</th>
             <th className="p-3">Sell</th>
+            <th className="p-3">Status</th>
             <th className="p-3"></th>
           </tr>
         </thead>
@@ -97,11 +101,20 @@ export function ProductsPage() {
           {products.map((p) => (
             <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
               <td className="p-3 font-mono text-xs">{p.sku}</td>
-              <td className="p-3">{p.name}</td>
+              <td className="p-3">
+                {p.name}
+                {p.parentProductId && <span className="ml-2 text-xs text-slate-400">(variant)</span>}
+              </td>
               <td className="p-3">{p.category?.name ?? "—"}</td>
               <td className="p-3">{formatCents(p.costPriceCents)}</td>
               <td className="p-3">{formatCents(p.sellPriceCents)}</td>
+              <td className="p-3 text-xs text-slate-500">{p.isActive ? "Active" : "Inactive (group)"}</td>
               <td className="p-3 text-right">
+                {!p.parentProductId && (
+                  <button onClick={() => setManagingVariantsOf(p)} className="mr-3 text-brand-600 hover:underline">
+                    Variants{p._count?.variants ? ` (${p._count.variants})` : ""}
+                  </button>
+                )}
                 <button onClick={() => setEditing(p)} className="text-brand-600 hover:underline">
                   Edit
                 </button>
@@ -159,6 +172,20 @@ export function ProductsPage() {
                   className="w-1/2 rounded border border-slate-300 px-3 py-2"
                 />
               </div>
+              <label className="flex items-center gap-2 text-sm text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={editing.isActive ?? true}
+                  onChange={(e) => setEditing({ ...editing, isActive: e.target.checked })}
+                />
+                Active (sellable at the register)
+              </label>
+              {!(editing.isActive ?? true) && (
+                <p className="text-xs text-slate-400">
+                  Inactive products don&apos;t show up in POS search — use this for a variant &quot;group&quot; product that
+                  only exists to hold shared variants, not to be sold directly.
+                </p>
+              )}
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <button onClick={() => setEditing(null)} className="rounded border border-slate-300 px-4 py-2 text-sm font-medium">
@@ -170,6 +197,14 @@ export function ProductsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {managingVariantsOf && (
+        <VariantsModal
+          parent={managingVariantsOf}
+          onClose={() => setManagingVariantsOf(null)}
+          onChanged={() => void load()}
+        />
       )}
     </div>
   );

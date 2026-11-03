@@ -14,6 +14,19 @@ export interface Product {
   category?: { id: string; name: string } | null;
   taxRate?: { id: string; name: string; rateBasisPoints: number } | null;
   barcodes: { id: string; code: string; type: string; isPrimary: boolean }[];
+  parentProductId?: string | null;
+  variantAttributes?: string | null; // JSON, e.g. {"color":"Red","size":"15ml"}
+  variants?: Product[];
+  _count?: { variants: number };
+}
+
+export interface Customer {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  loyaltyPoints: number;
+  createdAt: string;
 }
 
 export interface SaleLine {
@@ -44,11 +57,15 @@ export interface Sale {
   receiptNumber: string | null;
   locationId: string;
   cashierId: string;
+  customerId: string | null;
+  customer?: Customer | null;
   status: SaleStatus;
   subtotalCents: number;
   discountCents: number;
   taxCents: number;
   totalCents: number;
+  loyaltyPointsEarned: number;
+  loyaltyPointsRedeemed: number;
   heldLabel: string | null;
   createdAt: string;
   completedAt: string | null;

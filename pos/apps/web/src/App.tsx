@@ -11,6 +11,7 @@ import { PurchaseOrdersPage } from "./pages/inventory/PurchaseOrdersPage.js";
 import { StockCountsPage } from "./pages/inventory/StockCountsPage.js";
 import { ReportsPage } from "./pages/reports/ReportsPage.js";
 import { SettingsPage } from "./pages/settings/SettingsPage.js";
+import { CustomersPage } from "./pages/customers/CustomersPage.js";
 
 export default function App() {
   const bootstrap = useAuthStore((s) => s.bootstrap);
@@ -31,6 +32,7 @@ export default function App() {
               <Route path="/inventory/stock" element={<StockPage />} />
               <Route path="/inventory/purchase-orders" element={<PurchaseOrdersPage />} />
               <Route path="/inventory/stock-counts" element={<StockCountsPage />} />
+              <Route path="/customers" element={<CustomersPage />} />
               <Route path="/reports" element={<ReportsPage />} />
             </Route>
             <Route element={<ProtectedRoute roles={["ADMIN"]} />}>

@@ -12,6 +12,8 @@ interface StoreSettings {
   receiptFooterText: string | null;
   costingMethod: "FIFO" | "WEIGHTED_AVERAGE";
   discountApprovalThresholdBasisPoints: number;
+  loyaltyPointsPerDollar: number;
+  loyaltyPointValueCents: number;
 }
 interface User {
   id: string;
@@ -105,6 +107,26 @@ export function SettingsPage() {
                 onChange={(e) =>
                   setSettings({ ...settings, discountApprovalThresholdBasisPoints: Math.round(Number(e.target.value) * 100) })
                 }
+                className="w-full rounded border border-slate-300 px-2 py-1.5"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block font-medium text-slate-600">Loyalty points earned per dollar spent</span>
+              <input
+                type="number"
+                min="0"
+                value={settings.loyaltyPointsPerDollar}
+                onChange={(e) => setSettings({ ...settings, loyaltyPointsPerDollar: Math.round(Number(e.target.value)) })}
+                className="w-full rounded border border-slate-300 px-2 py-1.5"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block font-medium text-slate-600">Value of 1 redeemed loyalty point (cents)</span>
+              <input
+                type="number"
+                min="1"
+                value={settings.loyaltyPointValueCents}
+                onChange={(e) => setSettings({ ...settings, loyaltyPointValueCents: Math.round(Number(e.target.value)) })}
                 className="w-full rounded border border-slate-300 px-2 py-1.5"
               />
             </label>

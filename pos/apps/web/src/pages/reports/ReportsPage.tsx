@@ -27,6 +27,14 @@ interface ValuationLine {
   quantityOnHand: number;
   valueCents: number;
 }
+interface ExpiringBatch {
+  batchId: string;
+  sku: string;
+  name: string;
+  quantityRemaining: number;
+  lotNumber: string | null;
+  expirationDate: string;
+}
 
 export function ReportsPage() {
   const [locations, setLocations] = useState<Location[]>([]);
@@ -36,6 +44,7 @@ export function ReportsPage() {
   const [slowMoving, setSlowMoving] = useState<ProductLine[]>([]);
   const [valuation, setValuation] = useState<{ method: string; totalCents: number; lines: ValuationLine[] } | null>(null);
   const [lowStockCount, setLowStockCount] = useState(0);
+  const [expiringSoon, setExpiringSoon] = useState<ExpiringBatch[]>([]);
 
   useEffect(() => {
     api.get<Location[]>("/locations").then((res) => {
@@ -53,6 +62,9 @@ export function ReportsPage() {
       .get<{ method: string; totalCents: number; lines: ValuationLine[] }>(`/reports/inventory-valuation?locationId=${locationId}`)
       .then((r) => setValuation(r.data));
     api.get<{ id: string }[]>(`/stock/low-stock?locationId=${locationId}`).then((r) => setLowStockCount(r.data.length));
+    api
+      .get<ExpiringBatch[]>(`/stock/expiring-soon?locationId=${locationId}&withinDays=30`)
+      .then((r) => setExpiringSoon(r.data));
   }, [locationId]);
 
   function exportCsv() {
@@ -77,11 +89,12 @@ export function ReportsPage() {
         </div>
       </div>
 
-      <div className="mb-6 grid grid-cols-4 gap-4">
+      <div className="mb-6 grid grid-cols-5 gap-4">
         <StatCard label="Today's sales" value={summary ? formatCents(summary.netSalesCents) : "—"} />
         <StatCard label="Transactions" value={summary ? String(summary.transactionCount) : "—"} />
         <StatCard label="Tax collected" value={summary ? formatCents(summary.taxCents) : "—"} />
         <StatCard label="Low stock alerts" value={String(lowStockCount)} highlight={lowStockCount > 0} />
+        <StatCard label="Expiring within 30 days" value={String(expiringSoon.length)} highlight={expiringSoon.length > 0} />
       </div>
 
       <div className="grid grid-cols-2 gap-6">
@@ -137,6 +150,23 @@ export function ReportsPage() {
               <div key={l.productId} className="flex justify-between text-sm">
                 <span>{l.name}</span>
                 <span>{formatCents(l.valueCents)}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="col-span-2 rounded-lg bg-white p-4 shadow-sm">
+          <h2 className="mb-2 font-semibold">Expiring within 30 days</h2>
+          {expiringSoon.length === 0 && <p className="text-sm text-slate-400">Nothing expiring soon.</p>}
+          <div className="max-h-48 overflow-y-auto">
+            {expiringSoon.map((b) => (
+              <div key={b.batchId} className="flex justify-between text-sm">
+                <span>
+                  {b.name} {b.lotNumber && <span className="text-xs text-slate-400">(lot {b.lotNumber})</span>}
+                </span>
+                <span className="text-amber-600">
+                  {b.quantityRemaining / 1000} left · exp {new Date(b.expirationDate).toLocaleDateString()}
+                </span>
               </div>
             ))}
           </div>

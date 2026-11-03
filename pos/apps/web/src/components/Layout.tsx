@@ -8,6 +8,7 @@ const links: { to: string; label: string; roles: Role[] }[] = [
   { to: "/inventory/stock", label: "Stock", roles: ["ADMIN", "MANAGER"] },
   { to: "/inventory/purchase-orders", label: "Purchase Orders", roles: ["ADMIN", "MANAGER"] },
   { to: "/inventory/stock-counts", label: "Stock Counts", roles: ["ADMIN", "MANAGER"] },
+  { to: "/customers", label: "Customers", roles: ["ADMIN", "MANAGER"] },
   { to: "/reports", label: "Reports", roles: ["ADMIN", "MANAGER"] },
   { to: "/settings", label: "Settings", roles: ["ADMIN"] }
 ];

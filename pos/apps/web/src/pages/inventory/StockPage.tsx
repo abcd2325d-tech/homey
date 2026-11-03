@@ -11,6 +11,8 @@ export function StockPage() {
   const [adjusting, setAdjusting] = useState<StockItem | null>(null);
   const [delta, setDelta] = useState("");
   const [unitCost, setUnitCost] = useState("");
+  const [lotNumber, setLotNumber] = useState("");
+  const [expirationDate, setExpirationDate] = useState("");
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -41,11 +43,15 @@ export function StockPage() {
         locationId: adjusting.locationId,
         deltaMilliUnits: toMilliUnits(Number(delta)),
         unitCostCents: unitCost ? Math.round(Number(unitCost) * 100) : undefined,
+        lotNumber: lotNumber || undefined,
+        expirationDate: expirationDate || undefined,
         reason: reason || "Manual adjustment"
       });
       setAdjusting(null);
       setDelta("");
       setUnitCost("");
+      setLotNumber("");
+      setExpirationDate("");
       setReason("");
       await load();
     } catch (err) {
@@ -120,6 +126,21 @@ export function StockPage() {
               onChange={(e) => setUnitCost(e.target.value)}
               className="mb-2 w-full rounded border border-slate-300 px-3 py-2"
             />
+            <div className="mb-2 flex gap-2">
+              <input
+                placeholder="Lot number (optional)"
+                value={lotNumber}
+                onChange={(e) => setLotNumber(e.target.value)}
+                className="w-1/2 rounded border border-slate-300 px-3 py-2"
+              />
+              <input
+                type="date"
+                title="Expiration date (optional)"
+                value={expirationDate}
+                onChange={(e) => setExpirationDate(e.target.value)}
+                className="w-1/2 rounded border border-slate-300 px-3 py-2"
+              />
+            </div>
             <input
               placeholder="Reason"
               value={reason}

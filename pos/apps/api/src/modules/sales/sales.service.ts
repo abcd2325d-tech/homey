@@ -14,7 +14,8 @@ type Tx = Prisma.TransactionClient;
 const SALE_INCLUDE = {
   lines: { include: { product: true } },
   payments: true,
-  refunds: { include: { lines: true } }
+  refunds: { include: { lines: true } },
+  customer: true
 } satisfies Prisma.SaleInclude;
 
 export async function createSale(locationId: string, cashierId: string, customerId?: string) {

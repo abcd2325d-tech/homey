@@ -76,6 +76,14 @@ export function PaymentModal({ sale: initialSale, onCompleted, onClose }: Props)
             {m}
           </button>
         ))}
+        {sale.customer && sale.customer.loyaltyPoints > 0 && (
+          <button
+            onClick={() => setMethod("LOYALTY")}
+            className={`flex-1 rounded border px-3 py-2 text-sm font-medium ${method === "LOYALTY" ? "border-brand-500 bg-brand-50 text-brand-700" : "border-slate-300 text-slate-600"}`}
+          >
+            Points ({sale.customer.loyaltyPoints})
+          </button>
+        )}
       </div>
 
       {method === "CASH" && (
@@ -95,6 +103,12 @@ export function PaymentModal({ sale: initialSale, onCompleted, onClose }: Props)
         </div>
       )}
 
+      {method === "LOYALTY" && sale.customer && (
+        <p className="mb-3 text-sm text-slate-500">
+          {sale.customer.name} has {sale.customer.loyaltyPoints} points available to redeem.
+        </p>
+      )}
+
       <div className="flex gap-2">
         <button
           disabled={busy || remaining <= 0}
@@ -103,7 +117,7 @@ export function PaymentModal({ sale: initialSale, onCompleted, onClose }: Props)
         >
           Pay {formatCents(remaining)}
         </button>
-        {method !== "CARD" && (
+        {method !== "CARD" && method !== "LOYALTY" && (
           <button
             disabled={busy}
             onClick={() => {

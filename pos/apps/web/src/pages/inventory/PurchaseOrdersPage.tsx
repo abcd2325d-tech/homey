@@ -32,6 +32,8 @@ export function PurchaseOrdersPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [creating, setCreating] = useState(false);
   const [receiving, setReceiving] = useState<PurchaseOrder | null>(null);
+  const [receiveLot, setReceiveLot] = useState("");
+  const [receiveExpiration, setReceiveExpiration] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const [form, setForm] = useState<{ supplierId: string; locationId: string; lines: { productId: string; quantityOrdered: string; unitCostCents: string }[] }>({
@@ -82,10 +84,17 @@ export function PurchaseOrdersPage() {
   async function receiveAll(po: PurchaseOrder) {
     const lines = po.lines
       .filter((l) => l.quantityReceived < l.quantityOrdered)
-      .map((l) => ({ lineId: l.id, quantityReceivedDelta: l.quantityOrdered - l.quantityReceived }));
+      .map((l) => ({
+        lineId: l.id,
+        quantityReceivedDelta: l.quantityOrdered - l.quantityReceived,
+        lotNumber: receiveLot || undefined,
+        expirationDate: receiveExpiration || undefined
+      }));
     if (lines.length === 0) return;
     await api.post(`/purchase-orders/${po.id}/receive`, { lines });
     setReceiving(null);
+    setReceiveLot("");
+    setReceiveExpiration("");
     await load();
   }
 
@@ -235,7 +244,22 @@ export function PurchaseOrdersPage() {
                 </li>
               ))}
             </ul>
-            <p className="mb-4 text-xs text-slate-400">This receives the full remaining quantity on every line.</p>
+            <p className="mb-2 text-xs text-slate-400">This receives the full remaining quantity on every line.</p>
+            <div className="mb-4 flex gap-2">
+              <input
+                placeholder="Lot number (optional, applied to all lines)"
+                value={receiveLot}
+                onChange={(e) => setReceiveLot(e.target.value)}
+                className="w-1/2 rounded border border-slate-300 px-3 py-2 text-sm"
+              />
+              <input
+                type="date"
+                title="Expiration date (optional)"
+                value={receiveExpiration}
+                onChange={(e) => setReceiveExpiration(e.target.value)}
+                className="w-1/2 rounded border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
             <div className="flex justify-end gap-2">
               <button onClick={() => setReceiving(null)} className="rounded border border-slate-300 px-4 py-2 text-sm font-medium">
                 Cancel

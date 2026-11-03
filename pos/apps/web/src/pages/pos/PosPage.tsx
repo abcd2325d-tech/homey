@@ -10,11 +10,12 @@ import { PaymentModal } from "../../components/pos/PaymentModal.js";
 import { DiscountModal } from "../../components/pos/DiscountModal.js";
 import { ManagerPinModal } from "../../components/pos/ManagerPinModal.js";
 import { UnknownBarcodeModal } from "../../components/pos/UnknownBarcodeModal.js";
+import { CustomerModal } from "../../components/pos/CustomerModal.js";
 import { Modal } from "../../components/Modal.js";
 import { useScanSound } from "../../hooks/useScanSound.js";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts.js";
 import { formatCents } from "../../lib/format.js";
-import type { Location, Product, Sale } from "../../lib/types.js";
+import type { Customer, Location, Product, Sale } from "../../lib/types.js";
 
 export function PosPage() {
   const { playSuccess, playError } = useScanSound();
@@ -35,6 +36,7 @@ export function PosPage() {
   const [voidPrompt, setVoidPrompt] = useState(false);
   const [voidReason, setVoidReason] = useState("");
   const [lastReceipt, setLastReceipt] = useState<Sale | null>(null);
+  const [showCustomer, setShowCustomer] = useState(false);
 
   useEffect(() => {
     api.get<Location[]>("/locations").then((res) => {
@@ -136,6 +138,13 @@ export function PosPage() {
     setSale(res.data);
   }
 
+  async function attachCustomer(customer: Customer) {
+    const current = await ensureSale();
+    const res = await posApi.attachCustomer(current.id, customer.id);
+    setSale(res.data);
+    setShowCustomer(false);
+  }
+
   async function doVoid(approverId?: string) {
     if (!sale) return;
     try {
@@ -202,6 +211,19 @@ export function PosPage() {
       </div>
 
       <div className="flex flex-col bg-white">
+        <button
+          onClick={() => setShowCustomer(true)}
+          className="flex items-center justify-between border-b border-slate-200 px-3 py-2 text-sm hover:bg-slate-50"
+        >
+          {sale?.customer ? (
+            <>
+              <span className="font-medium text-slate-800">{sale.customer.name}</span>
+              <span className="text-xs font-medium text-brand-600">{sale.customer.loyaltyPoints} pts</span>
+            </>
+          ) : (
+            <span className="text-slate-400">+ Attach a customer</span>
+          )}
+        </button>
         <CartPanel
           sale={sale}
           onQtyChange={changeQty}
@@ -293,6 +315,10 @@ export function PosPage() {
         </Modal>
       )}
 
+      {showCustomer && (
+        <CustomerModal onClose={() => setShowCustomer(false)} onSelect={(customer) => void attachCustomer(customer)} />
+      )}
+
       {voidPrompt && sale && (
         <VoidModal
           reason={voidReason}
@@ -376,6 +402,15 @@ function ReceiptView({ sale, onNewSale }: { sale: Sale; onNewSale: () => void })
             <span>Total</span>
             <span>{formatCents(sale.totalCents)}</span>
           </div>
+          {sale.customer && (
+            <div className="mt-2 flex justify-between text-xs text-slate-500">
+              <span>{sale.customer.name}</span>
+              <span>
+                {sale.loyaltyPointsRedeemed > 0 && `−${sale.loyaltyPointsRedeemed} pts redeemed · `}
+                +{sale.loyaltyPointsEarned} pts earned
+              </span>
+            </div>
+          )}
         </div>
         <button onClick={onNewSale} className="mt-5 w-full rounded bg-brand-600 py-2 font-semibold text-white hover:bg-brand-700">
           New sale
