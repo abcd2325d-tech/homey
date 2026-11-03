@@ -8,7 +8,26 @@ import { getStoreSettings } from "../inventory/stock.service.js";
 import { recordAudit } from "../auditLog/auditLog.service.js";
 
 export const settingsRouter = Router();
-settingsRouter.use(requireAuth, requireRole("ADMIN"));
+settingsRouter.use(requireAuth);
+
+// A safe subset any authenticated role can read — the register needs
+// currency/locale for formatting and the loyalty point value to let a
+// cashier know how much a redemption is worth; everything else (admin
+// contact info, tax ID, discount threshold) stays admin-only below.
+settingsRouter.get("/public", async (_req, res) => {
+  const settings = await getStoreSettings();
+  res.json({
+    data: {
+      storeName: settings.storeName,
+      currencyCode: settings.currencyCode,
+      locale: settings.locale,
+      loyaltyPointsPerDollar: settings.loyaltyPointsPerDollar,
+      loyaltyPointValueCents: settings.loyaltyPointValueCents
+    }
+  });
+});
+
+settingsRouter.use(requireRole("ADMIN"));
 
 settingsRouter.get("/", async (_req, res) => {
   res.json({ data: await getStoreSettings() });

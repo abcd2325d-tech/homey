@@ -1,15 +1,20 @@
 # POS & Inventory Management System
 
-A production-shaped Point of Sale and inventory system for a retail store: multi-location
-stock, barcode scanning (USB and camera), sales with discounts/holds/voids/refunds, purchase
-orders, stock counts, reports, and printable/thermal receipts.
+A production-shaped Point of Sale and inventory system for a retail store — the demo data is
+set up for a beauty supply shop, but nothing in the system is beauty-specific; it's a general
+multi-location retail POS. Features: barcode scanning (USB and camera), sales with
+discounts/holds/voids/refunds, product variants (e.g. nail polish by color/size),
+lot/expiration batch tracking, a customer loyalty program, purchase orders, stock counts,
+reports, and printable/thermal receipts.
 
 - **Backend:** Node.js + TypeScript, Express, Prisma ORM. SQLite for local dev, PostgreSQL
   for production (one schema, switched by an env var — see below).
 - **Frontend:** React + TypeScript + Vite, Tailwind CSS.
 - **Auth:** JWT access/refresh tokens, roles (Admin/Manager/Cashier), manager-PIN approval
-  for in-the-moment overrides (discounts, voids, refunds) without a role switch.
-- **Testing:** Vitest (backend, 107 tests) + Playwright (frontend e2e, main POS flow).
+  for in-the-moment overrides (discounts, voids, refunds, creating a product from an unknown
+  scan) without a role switch.
+- **Testing:** Vitest (backend, 117 tests) + Playwright (frontend e2e: the main POS flow, a
+  discount-approval flow, and a customer loyalty redeem/earn flow).
 
 > This lives at `pos/` inside a repo that also holds two unrelated existing projects
 > (`client/`/`server/`, an Airbnb-style booking app, and `designer/`, a 3D model tool) — it
@@ -76,6 +81,22 @@ pos/
   running cost on `StockItem`; FIFO consumes `CostLayer` rows oldest-first. Both are pure,
   independently unit-tested functions (`lib/stock.ts`, `lib/fifo.ts`) that the service layer
   wraps in persistence.
+- **Lot/expiration tracking rides on the same `CostLayer` table**, created and consumed on
+  every stock movement regardless of costing method (previously it only existed under FIFO).
+  Under weighted-average costing the cost math is unaffected — `CostLayer` there is purely a
+  lot/expiration record, consumed oldest-received-first so "what's left of batch X" stays
+  accurate even when it isn't driving cost.
+- **A product variant is just another `Product` row.** One with `parentProductId` set,
+  linked to a non-sellable "group" parent (typically `isActive: false`). Each variant has its
+  own SKU, barcode, price, and stock, so it reuses every existing stock/sales/receipt code
+  path untouched instead of adding a parallel variant system — the trade-off is that a
+  variant's price/stock changes are managed per-variant, not in bulk across the group.
+- **Loyalty points redeem as a payment method, not a special discount.** `POST
+  /sales/:id/payments` with `method: "LOYALTY"` deducts `ceil(amountCents /
+  loyaltyPointValueCents)` points from the attached customer and records a normal `Payment`
+  row, so redemption composes with split payments for free. Completing the sale then earns
+  points only on whatever wasn't paid with points (`loyaltyPointsPerDollar`, configurable),
+  which keeps a customer from minting points by redeeming points.
 - **Manager-PIN approval** is one mechanism reused everywhere a cashier needs a manager's
   sign-off without logging out: discounts over a configurable threshold, voids, refunds, and
   creating a new product from an unrecognized barcode scan. A Manager/Admin acting on their
@@ -112,6 +133,12 @@ Open http://localhost:5173. Demo accounts (password `password123` for all):
 | admin@example.com | Admin | manages users, settings |
 | manager@example.com | Manager | PIN `1234` — approves discounts/voids/refunds, adjusts stock |
 | cashier@example.com | Cashier | sells at the register |
+
+The seed script loads a beauty-supply catalog (Hair Care, Skin Care, Nails, Makeup, Tools &
+Accessories — 8 products plus an "OPI Nail Polish" variant group with 3 color/size variants),
+a Vitamin C Serum batch with a lot number and a 60-day expiration for the lot/expiration
+report, and three demo loyalty customers (Priya Patel: 150 pts, Jordan Lee: 0 pts, Morgan
+Diaz: 500 pts) to try the points-redemption flow with.
 
 ## Environment variables (`apps/api/.env`)
 
@@ -188,11 +215,13 @@ flow (cart → discount → split payment → complete → stock decrement → r
 
 The Playwright suite covers the main POS flow end to end against a real Chromium instance:
 login → scan a barcode (keyboard-wedge style) → search for a second item → pay cash with
-change → see the receipt — plus a second test for the discount-over-threshold/manager-PIN
-path. Driving the real browser caught two genuine bugs during development (both fixed):
-the barcode input was stealing focus back from the product search box on every blur, and
-completing a sale never updated the page's local state, so starting a new sale afterward
-silently failed to re-hold the (already-completed) previous one.
+change → see the receipt — plus a discount-over-threshold/manager-PIN test and a customer
+loyalty redeem/earn test. Driving the real browser caught three genuine bugs during
+development (all fixed): the barcode input was stealing focus back from the product search
+box on every blur; completing a sale never updated the page's local state, so starting a new
+sale afterward silently failed to re-hold the (already-completed) previous one; and the
+points-redemption UI only supported paying the *entire* remaining balance with points, which
+broke the moment a customer's balance was worth less than the sale total.
 
 ## What's complete
 
@@ -202,16 +231,23 @@ silently failed to re-hold the (already-completed) previous one.
 - Inventory: multi-location stock, movements, adjustments, purchase orders (partial
   receiving), stock counts with variance reports, low-stock alerts, valuation (FIFO or
   weighted average)
-- Sales: cart, line discounts with approval, hold/recall, split cash/card payments, void,
-  partial/full refunds, per-location sequential receipt numbers
+- Sales: cart, line discounts with approval, hold/recall, split cash/card/loyalty-points
+  payments, void, partial/full refunds, per-location sequential receipt numbers
+- Product variants (e.g. nail polish by color/size) and lot/expiration batch tracking with
+  an "expiring soon" report
+- Customer loyalty: attach a customer to a sale, redeem points (full or partial) as a
+  payment method, earn points on whatever wasn't paid with points, configurable rate
 - Receipts: HTML, PDF (pdfkit), and raw ESC/POS bytes for thermal printers — all three from
   the same sale data
 - Reports: daily sales summary (payment/cashier breakdown), top-sellers, slow-movers,
-  inventory valuation, CSV export; dashboard with today's numbers and low-stock count
-- Settings: store profile, currency/locale, costing method, discount-approval threshold
+  inventory valuation, expiring-soon batches, CSV export; dashboard with today's numbers,
+  low-stock, and expiring-soon counts
+- Settings: store profile, currency/locale, costing method, discount-approval threshold,
+  loyalty rate/point value
 - Frontend: full POS register screen (USB scanner input, camera scanning via html5-qrcode,
-  distinct success/error tones, keyboard shortcuts F2/F3/F4/F8), inventory management
-  screens, reports/dashboard, settings, Docker Compose for production
+  distinct success/error tones, keyboard shortcuts F2/F3/F4/F8, customer lookup/attach),
+  inventory management screens (incl. variant management, lot/expiration entry), a
+  customers page, reports/dashboard, settings, Docker Compose for production
 
 ## What's stubbed or simplified — test these first
 
@@ -233,6 +269,14 @@ silently failed to re-hold the (already-completed) previous one.
   PDF export wasn't built given the time budget.
 - **The Docker Compose stack is reviewed but not build-verified** (see note above) — build
   it once in a real Docker environment before relying on it.
+- **Variant price/stock/barcode changes are per-variant, not bulk-editable across the
+  group** — raising the price on "OPI Nail Polish" doesn't touch its color variants; each is
+  edited individually in Products.
+- **Loyalty points have no expiration, tiers, or minimum-redemption rules** — they accrue
+  and redeem at a flat configurable rate with no other business logic layered on.
+- **No receipt delivery (email/SMS) and no customer-facing order history** — a customer
+  record just tracks identity and a points balance for redemption at the register.
 - Test the full sale flow (scan → cart → discount → split payment → complete → receipt)
-  first, since that's the path every other feature hangs off of; then purchase-order
-  receiving and stock counts, since those are the next-most state-heavy flows.
+  first, since that's the path every other feature hangs off of; then the loyalty
+  redeem/earn flow and variant creation, since those are the newest and most state-heavy;
+  then purchase-order receiving and stock counts.

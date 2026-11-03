@@ -101,6 +101,14 @@ describe("settings", () => {
     const res = await request(app).get("/api/settings").set("Authorization", `Bearer ${accessToken}`);
     expect(res.status).toBe(403);
   });
+
+  it("lets any authenticated role read the public settings subset", async () => {
+    const { accessToken } = await createTestUser({ role: "CASHIER" });
+    const res = await request(app).get("/api/settings/public").set("Authorization", `Bearer ${accessToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.loyaltyPointValueCents).toBe(1);
+    expect(res.body.data.taxId).toBeUndefined();
+  });
 });
 
 describe("receipts", () => {

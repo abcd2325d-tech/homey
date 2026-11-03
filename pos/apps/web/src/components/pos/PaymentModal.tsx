@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Modal } from "../Modal.js";
 import { formatCents } from "../../lib/format.js";
+import { api } from "../../lib/api.js";
 import { posApi } from "../../lib/posApi.js";
 import { ApiError } from "../../lib/api.js";
 import type { PaymentMethod } from "@pos/shared";
@@ -21,11 +22,25 @@ export function PaymentModal({ sale: initialSale, onCompleted, onClose }: Props)
   const [sale, setSale] = useState(initialSale);
   const [method, setMethod] = useState<PaymentMethod>("CASH");
   const [tendered, setTendered] = useState("");
+  const [pointValueCents, setPointValueCents] = useState(1);
+  const [redeemAmount, setRedeemAmount] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [lastChange, setLastChange] = useState<number | null>(null);
 
   const remaining = remainingCents(sale);
+  const maxRedeemableCents = sale.customer ? sale.customer.loyaltyPoints * pointValueCents : 0;
+
+  useEffect(() => {
+    api.get<{ loyaltyPointValueCents: number }>("/settings/public").then((res) => setPointValueCents(res.data.loyaltyPointValueCents));
+  }, []);
+
+  useEffect(() => {
+    if (method === "LOYALTY") {
+      setRedeemAmount((Math.min(remaining, maxRedeemableCents) / 100).toFixed(2));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [method]);
 
   async function pay(amountCents: number) {
     setBusy(true);
@@ -104,18 +119,38 @@ export function PaymentModal({ sale: initialSale, onCompleted, onClose }: Props)
       )}
 
       {method === "LOYALTY" && sale.customer && (
-        <p className="mb-3 text-sm text-slate-500">
-          {sale.customer.name} has {sale.customer.loyaltyPoints} points available to redeem.
-        </p>
+        <div className="mb-3">
+          <p className="mb-1 text-sm text-slate-500">
+            {sale.customer.name} has {sale.customer.loyaltyPoints} points, worth up to {formatCents(maxRedeemableCents)}.
+          </p>
+          <label className="mb-1 block text-sm text-slate-600">Amount to redeem</label>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            autoFocus
+            aria-label="Amount to redeem"
+            value={redeemAmount}
+            onChange={(e) => setRedeemAmount(e.target.value)}
+            className="w-full rounded border border-slate-300 px-3 py-2 focus:border-brand-500 focus:outline-none"
+          />
+        </div>
       )}
 
       <div className="flex gap-2">
         <button
           disabled={busy || remaining <= 0}
-          onClick={() => pay(remaining)}
+          onClick={() => {
+            if (method === "LOYALTY") {
+              const amount = Math.min(remaining, Math.round(Number(redeemAmount || 0) * 100), maxRedeemableCents);
+              pay(Math.max(amount, 0));
+            } else {
+              pay(remaining);
+            }
+          }}
           className="flex-1 rounded bg-brand-600 py-2 font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
         >
-          Pay {formatCents(remaining)}
+          {method === "LOYALTY" ? "Redeem points" : `Pay ${formatCents(remaining)}`}
         </button>
         {method !== "CARD" && method !== "LOYALTY" && (
           <button

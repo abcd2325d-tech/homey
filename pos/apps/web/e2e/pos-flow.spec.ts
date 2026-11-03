@@ -13,14 +13,14 @@ test.describe("main POS flow", () => {
 
     // Scan a known barcode (USB keyboard-wedge: type into the barcode field, then Enter).
     const barcodeInput = page.getByPlaceholder(/Scan or type a barcode/i);
-    await barcodeInput.fill("049000028911");
+    await barcodeInput.fill("041500001012");
     await barcodeInput.press("Enter");
-    await expect(page.getByText("Cola 12oz Can")).toBeVisible();
+    await expect(page.getByText("Argan Oil Shampoo 16oz")).toBeVisible();
 
     // Add a second item via the search grid, independently of the scan field.
-    await page.getByPlaceholder(/Search products by name or SKU/i).fill("Milk");
-    await page.getByRole("button", { name: /Whole Milk/i }).click();
-    await expect(page.getByText("Whole Milk, 1 Gallon")).toBeVisible();
+    await page.getByPlaceholder(/Search products by name or SKU/i).fill("Lipstick");
+    await page.getByRole("button", { name: /Matte Liquid Lipstick/i }).click();
+    await expect(page.getByText("Matte Liquid Lipstick")).toBeVisible();
 
     // Pay button shows the live total for both items.
     const payButton = page.getByRole("button", { name: /^Pay \(F4\)/ });
@@ -32,13 +32,13 @@ test.describe("main POS flow", () => {
     expect(remainingBefore).toBeTruthy();
 
     // Tender more than the total in cash to exercise the change calculation.
-    await page.getByPlaceholder(/^\d+\.\d\d$/).fill("20.00");
+    await page.getByPlaceholder(/^\d+\.\d\d$/).fill("30.00");
     await page.locator(".fixed").getByRole("button", { name: /^Pay \$/ }).click();
 
     // Completing payment finishes the sale and shows the receipt screen.
     await expect(page.getByText(/^Receipt #/)).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText("Cola 12oz Can")).toBeVisible();
-    await expect(page.getByText("Whole Milk, 1 Gallon")).toBeVisible();
+    await expect(page.getByText("Argan Oil Shampoo 16oz")).toBeVisible();
+    await expect(page.getByText("Matte Liquid Lipstick")).toBeVisible();
 
     // Starting a new sale returns to an empty cart (the previous one is auto-held).
     await page.getByRole("button", { name: "New sale" }).click();
@@ -53,9 +53,9 @@ test.describe("main POS flow", () => {
     await page.waitForURL("**/pos");
     await expect(page.locator("select").first()).not.toHaveValue("");
 
-    await page.getByPlaceholder(/Search products by name or SKU/i).fill("Cola");
-    await page.getByRole("button", { name: /Cola 12oz Can/i }).click();
-    await expect(page.getByText("Cola 12oz Can").first()).toBeVisible();
+    await page.getByPlaceholder(/Search products by name or SKU/i).fill("Shampoo");
+    await page.getByRole("button", { name: /Argan Oil Shampoo/i }).click();
+    await expect(page.getByText("Argan Oil Shampoo 16oz").first()).toBeVisible();
 
     await page.locator('button:has-text("%")').first().click();
     await expect(page.getByText("Apply discount")).toBeVisible();
@@ -69,5 +69,41 @@ test.describe("main POS flow", () => {
 
     // Approved: the discount is now reflected in the cart.
     await expect(page.getByText(/−\$/).first()).toBeVisible();
+  });
+
+  test("attaches an existing customer, redeems points, and earns new ones on checkout", async ({ page }) => {
+    await page.goto("/login");
+    await page.fill('input[type="email"]', "cashier@example.com");
+    await page.fill('input[type="password"]', "password123");
+    await page.click('button[type="submit"]');
+    await page.waitForURL("**/pos");
+    await expect(page.locator("select").first()).not.toHaveValue("");
+
+    await page.getByText("+ Attach a customer").click();
+    await page.getByPlaceholder("Search by name or phone").fill("Morgan");
+    await page.getByRole("button", { name: /Morgan Diaz/ }).click();
+    await expect(page.getByText("Morgan Diaz")).toBeVisible();
+    await expect(page.getByText("500 pts")).toBeVisible();
+
+    await page.getByPlaceholder(/Search products by name or SKU/i).fill("Lipstick");
+    await page.getByRole("button", { name: /Matte Liquid Lipstick/i }).click();
+    await expect(page.getByText("Matte Liquid Lipstick").first()).toBeVisible();
+
+    await page.getByRole("button", { name: /^Pay \(F4\)/ }).click();
+    await expect(page.getByText("Take payment")).toBeVisible();
+
+    // Redeem points first (Morgan has 500 points = $5.00, less than the $8.99 total,
+    // so the redeem amount defaults to the max redeemable rather than the full balance).
+    await page.getByRole("button", { name: /^Points \(500\)/ }).click();
+    await expect(page.getByLabel("Amount to redeem")).toHaveValue("5.00");
+    await page.locator(".fixed").getByRole("button", { name: "Redeem points" }).click();
+
+    // Pay the remaining balance with cash to complete the sale.
+    await page.locator(".fixed").getByRole("button", { name: "CASH" }).click();
+    await page.locator(".fixed").getByRole("button", { name: /^Pay \$/ }).click();
+
+    await expect(page.getByText(/^Receipt #/)).toBeVisible({ timeout: 10_000 });
+    // Only the cash-paid portion earns new points; the redemption also shows.
+    await expect(page.getByText(/pts redeemed/)).toBeVisible();
   });
 });
