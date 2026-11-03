@@ -156,12 +156,12 @@ Diaz: 500 pts) to try the points-redemption flow with.
 
 ### Getting barcode lookup API keys
 
+- **UPCitemdb** (https://www.upcitemdb.com/api) — queried first by default, since it covers
+  general retail/beauty products (Open Food Facts is food-only). Works with no key on the
+  free trial tier (100 lookups/day, shared across anyone using that tier — fine for
+  development, too rate-limited to rely on at a real register). For higher limits, sign up
+  and set `UPCITEMDB_API_KEY`.
 - **Open Food Facts** — no key needed, it's open data. Used for food/grocery.
-- **UPCitemdb** (https://www.upcitemdb.com/api) — works with no key on the free trial tier
-  (100 lookups/day). For higher limits, sign up and set `UPCITEMDB_API_KEY`. **Off by
-  default** (not in `BARCODE_LOOKUP_PROVIDERS`'s default list) since it wasn't one of the
-  two providers asked for, but the adapter is fully implemented — add `upcitemdb` to the env
-  var to turn it on.
 - **Amazon Product Advertising API** — requires an *approved* Amazon Associates account; PA-API
   access isn't automatic on signup. Create API credentials in Associates Central, then set
   `AMAZON_PAAPI_ACCESS_KEY`, `AMAZON_PAAPI_SECRET_KEY`, and `AMAZON_PAAPI_PARTNER_TAG`. **Note:**

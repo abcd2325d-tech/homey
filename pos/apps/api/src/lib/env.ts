@@ -20,7 +20,7 @@ export const env = {
   jwtAccessTtl: process.env.JWT_ACCESS_TTL ?? "15m",
   jwtRefreshTtl: process.env.JWT_REFRESH_TTL ?? "30d",
 
-  barcodeLookupProviders: (process.env.BARCODE_LOOKUP_PROVIDERS ?? "openfoodfacts,amazon")
+  barcodeLookupProviders: (process.env.BARCODE_LOOKUP_PROVIDERS ?? "upcitemdb,openfoodfacts,amazon")
     .split(",")
     .map((p) => p.trim().toLowerCase())
     .filter(Boolean),
