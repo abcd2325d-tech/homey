@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "../../lib/api.js";
 import { ApiError } from "../../lib/api.js";
 import { fromMilliUnits } from "../../lib/format.js";
+import { CameraScanner } from "../../components/pos/CameraScanner.js";
+import { useScanSound } from "../../hooks/useScanSound.js";
 import type { Location, Product } from "../../lib/types.js";
 
 interface CountLine {
@@ -27,6 +29,7 @@ export function StockCountsPage() {
   const [qty, setQty] = useState("1");
   const [variance, setVariance] = useState<CountLine[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { playSuccess, playError } = useScanSound();
 
   useEffect(() => {
     api.get<Location[]>("/locations").then((res) => {
@@ -41,10 +44,12 @@ export function StockCountsPage() {
     setVariance(null);
   }
 
-  async function scan() {
+  async function scan(code?: string) {
+    const codeToUse = code ?? barcode;
+    if (!codeToUse.trim()) return;
     setError(null);
     try {
-      const product = await api.get<Product>(`/products/by-barcode/${encodeURIComponent(barcode)}`);
+      const product = await api.get<Product>(`/products/by-barcode/${encodeURIComponent(codeToUse)}`);
       await api.post(`/stock-counts/${session!.id}/lines`, {
         productId: product.data.id,
         countedQuantity: Math.round(Number(qty) * 1000)
@@ -53,7 +58,9 @@ export function StockCountsPage() {
       setSession(refreshed.data);
       setBarcode("");
       setQty("1");
+      playSuccess();
     } catch (err) {
+      playError();
       setError(err instanceof ApiError ? err.message : "Could not record count");
     }
   }
@@ -86,13 +93,13 @@ export function StockCountsPage() {
       {session && (
         <div>
           {error && <p className="mb-3 rounded bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
-          <div className="mb-4 flex gap-2">
+          <div className="mb-3 flex gap-2">
             <input
               autoFocus
               value={barcode}
               onChange={(e) => setBarcode(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && scan()}
-              placeholder="Scan barcode"
+              placeholder="Scan barcode (USB scanner or type it)"
               className="flex-1 rounded border border-slate-300 px-3 py-2"
             />
             <input
@@ -101,12 +108,15 @@ export function StockCountsPage() {
               onChange={(e) => setQty(e.target.value)}
               className="w-24 rounded border border-slate-300 px-3 py-2"
             />
-            <button onClick={scan} className="rounded bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">
+            <button onClick={() => scan()} className="rounded bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">
               Record
             </button>
             <button onClick={complete} className="rounded border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50">
               Complete count
             </button>
+          </div>
+          <div className="mb-4">
+            <CameraScanner onScan={(code) => void scan(code)} />
           </div>
           <table className="w-full rounded-lg bg-white text-sm shadow-sm">
             <thead className="border-b border-slate-200 text-left text-slate-500">
